@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Fundo Geral (Gray-50) */
+  --background: #F9FAFB; 
+  /* Texto Principal (Gray-900) */
+  --foreground: #111827;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Utilitário para garantir a fonte Inter (caso precise forçar) */
+.font-sans {
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+}
