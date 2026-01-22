@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-// O segredo está aqui: o @ aponta direto para a pasta src
-import { Sidebar } from "../components/Sidebar";
+import { Sidebar } from "@/src/components/Sidebar";
 import { Toaster } from "sonner";
 
 const inter = Inter({ subsets: ["latin"] });
@@ -19,23 +18,25 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="pt-br">
-      <body className={`${inter.className} bg-zinc-50 antialiased`}>
+      <body className={`${inter.className} bg-gray-50 antialiased`}>
+        {/* Container Flexível */}
         <div className="flex min-h-screen">
-          {/* Sidebar Fixa (não precisa passar props, ela se gerencia) */}
+          
+          {/* Sidebar (Agora se comporta bem no mobile) */}
           <Sidebar />
 
-          {/* Área principal do conteúdo.
-            ml-64: Margem esquerda de 64 (256px) para compensar a largura da Sidebar fixa.
-            Isso impede que o conteúdo fique escondido atrás do menu.
+          {/* CONTEÚDO PRINCIPAL 
+             - mt-14: Dá espaço para a barra de menu no topo (só no mobile)
+             - md:mt-0: Remove esse espaço no desktop
+             - md:ml-0: A Sidebar agora é flex item no desktop, não precisa de margin fixa se usarmos flex normal, 
+               MAS como a Sidebar no código acima usa 'md:static', ela ocupa espaço real no fluxo.
+               Então podemos remover a 'ml-64' fixa e deixar o flexbox cuidar do layout.
           */}
-          <main className="flex-1 ml-64 p-8 transition-all duration-300">
+          <main className="flex-1 p-4 md:p-8 mt-14 md:mt-0 w-full overflow-x-hidden">
             {children}
           </main>
         </div>
 
-        {/* Toaster: O componente que mostra os alertas bonitos.
-          richColors: Ativa cores semânticas (Verde para sucesso, Vermelho para erro).
-        */}
         <Toaster richColors position="top-right" closeButton />
       </body>
     </html>

@@ -20,3 +20,20 @@ export interface Produto {
 export interface ItemCarrinho extends Produto {
   quantidade: number;
 }
+
+// ... (outros tipos)
+
+export interface Parcela {
+  id: string;
+  venda_id: string;
+  cliente_id: string;
+  numero_parcela: number;
+  data_vencimento: string;
+  data_pagamento: string | null;
+  valor: number;
+  status: 'pendente' | 'pago' | 'atrasado';
+  clientes?: { // O Supabase traz assim quando fazemos JOIN
+    nome: string;
+    cpf: string;
+  }; 
+}
