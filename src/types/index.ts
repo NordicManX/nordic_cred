@@ -21,8 +21,6 @@ export interface ItemCarrinho extends Produto {
   quantidade: number;
 }
 
-// ... (outros tipos)
-
 export interface Parcela {
   id: string;
   venda_id: string;
@@ -36,4 +34,14 @@ export interface Parcela {
     nome: string;
     cpf: string;
   }; 
+}
+
+export interface Despesa {
+  id: string;
+  descricao: string;
+  categoria: 'fixa' | 'variavel' | 'fornecedor';
+  valor: number;
+  data_vencimento: string;
+  data_pagamento: string | null;
+  status: 'pendente' | 'pago';
 }

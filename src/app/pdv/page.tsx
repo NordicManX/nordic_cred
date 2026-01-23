@@ -16,6 +16,9 @@ const MOCK_PRODUTOS: Produto[] = [
   { id: "4", nome: "Monitor 24' IPS", preco: 890.00 },
   { id: "5", nome: "Headset Redragon", preco: 220.00 },
   { id: "6", nome: "Cadeira Ergonômica", preco: 1200.00 },
+  { id: "7", nome: "Fone de Ouvido Bluetooth Lenovo", preco: 199.00 },
+  { id: "8", nome: "Memoria RAM 16GB", preco: 232.00 },
+  { id: "9", nome: "SSD 1TB Samsung", preco: 789.00 },
 ];
 
 export default function PDVPage() {
