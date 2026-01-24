@@ -45,3 +45,18 @@ export interface Despesa {
   data_pagamento: string | null;
   status: 'pendente' | 'pago';
 }
+
+export interface Produto {
+  id: string;
+  nome: string;
+  preco: number;       // Preço de Venda
+  estoque?: number;
+  // Novos campos
+  codigo_barras?: string;
+  custo?: number;
+  margem_lucro?: number;
+  ncm?: string;
+  unidade?: string;
+  estoque_minimo?: number;
+  tipo_produto?: 'revenda' | 'servico' | 'fabricacao';
+}

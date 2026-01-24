@@ -3,17 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react"; // Importante para controlar o menu mobile
-import { 
-  LayoutDashboard, 
-  Users, 
-  ShoppingCart, 
-  Wallet, 
-  Banknote, 
-  LogOut,
-  ShieldCheck,
-  Menu,   // Ícone do Hambúrguer
-  X       // Ícone de Fechar
-} from "lucide-react";
+import { LayoutDashboard, Users, ShoppingCart, Wallet, Banknote, LogOut, ShieldCheck, Menu, X, Package } from "lucide-react";
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -23,6 +13,7 @@ export function Sidebar() {
     { name: "Dashboard", icon: LayoutDashboard, path: "/" },
     { name: "Clientes", icon: Users, path: "/clientes" },
     { name: "PDV", icon: ShoppingCart, path: "/pdv" },
+    { name: "Produtos", icon: Package, path: "/produtos" },
     { name: "Contas a Receber", icon: Wallet, path: "/contas-receber" },
     { name: "Contas a Pagar", icon: Banknote, path: "/contas-pagar" },
   ];
@@ -34,7 +25,7 @@ export function Sidebar() {
         <h1 className="text-xl font-bold tracking-tighter text-white">
           Nordic<span className="text-blue-600">Cred</span>
         </h1>
-        <button 
+        <button
           onClick={() => setIsMobileOpen(!isMobileOpen)}
           className="text-gray-300 hover:text-white p-1"
         >
@@ -44,7 +35,7 @@ export function Sidebar() {
 
       {/* --- OVERLAY ESCURO (Fundo preto quando menu abre no mobile) --- */}
       {isMobileOpen && (
-        <div 
+        <div
           className="fixed inset-0 z-40 bg-black/50 md:hidden backdrop-blur-sm"
           onClick={() => setIsMobileOpen(false)} // Fecha ao clicar fora
         />
@@ -56,7 +47,7 @@ export function Sidebar() {
         ${isMobileOpen ? "translate-x-0" : "-translate-x-full"} 
         md:translate-x-0 md:static md:h-screen
       `}>
-        
+
         {/* Cabeçalho Desktop (Escondido no mobile pois já tem a barra superior) */}
         <div className="hidden md:flex h-20 flex-col justify-center px-6 border-b border-gray-800">
           <h1 className="text-2xl font-bold tracking-tighter text-white">
@@ -72,7 +63,7 @@ export function Sidebar() {
           <p className="px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 hidden md:block">
             Menu Principal
           </p>
-          
+
           {menuItems.map((item) => {
             const isActive = pathname === item.path;
             return (
@@ -81,8 +72,8 @@ export function Sidebar() {
                 href={item.path}
                 onClick={() => setIsMobileOpen(false)} // Fecha menu ao clicar no link
                 className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 group relative font-medium
-                  ${isActive 
-                    ? "bg-blue-600 text-white shadow-lg shadow-blue-900/20" 
+                  ${isActive
+                    ? "bg-blue-600 text-white shadow-lg shadow-blue-900/20"
                     : "text-gray-400 hover:bg-gray-800 hover:text-white"
                   }
                 `}

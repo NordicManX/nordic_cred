@@ -1,65 +1,68 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Search, ShoppingCart, Trash2, User, CreditCard, Banknote } from "lucide-react";
+import { Search, ShoppingCart, Trash2, User, Loader2, Package, CheckCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Produto, ItemCarrinho, Cliente } from "@/src/types";
 import { createClient } from "@/src/lib/supabase";
-import { CheckoutModal } from "@/src/components/CheckoutModal";
 import { VendaSucessoModal } from "@/src/components/VendaSucessoModal";
-import { ConfirmAvistaModal } from "@/src/components/ConfirmAvistaModal"; // <--- IMPORT NOVO
-
-const MOCK_PRODUTOS: Produto[] = [
-  { id: "1", nome: "Notebook Gamer Acer", preco: 4500.00 },
-  { id: "2", nome: "Mouse Logitech G", preco: 150.00 },
-  { id: "3", nome: "Teclado Mecânico", preco: 350.00 },
-  { id: "4", nome: "Monitor 24' IPS", preco: 890.00 },
-  { id: "5", nome: "Headset Redragon", preco: 220.00 },
-  { id: "6", nome: "Cadeira Ergonômica", preco: 1200.00 },
-  { id: "7", nome: "Fone de Ouvido Bluetooth Lenovo", preco: 199.00 },
-  { id: "8", nome: "Memoria RAM 16GB", preco: 232.00 },
-  { id: "9", nome: "SSD 1TB Samsung", preco: 789.00 },
-];
+import { ConfirmModal } from "@/src/components/ConfirmModal"; 
+import { PaymentFlowModal } from "@/src/components/PaymentFlowModal"; 
 
 export default function PDVPage() {
   const supabase = createClient();
   
+  // --- ESTADOS DE DADOS ---
+  const [produtosDb, setProdutosDb] = useState<Produto[]>([]);
+  const [loadingProdutos, setLoadingProdutos] = useState(true);
   const [carrinho, setCarrinho] = useState<ItemCarrinho[]>([]);
-  const [buscaProduto, setBuscaProduto] = useState("");
   
+  // --- ESTADOS DE BUSCA ---
+  const [buscaProduto, setBuscaProduto] = useState("");
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [buscaCliente, setBuscaCliente] = useState("");
   const [clienteSelecionado, setClienteSelecionado] = useState<Cliente | null>(null);
   const [mostrarListaClientes, setMostrarListaClientes] = useState(false);
   
-  // Controle de Modais
-  const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
-  const [isConfirmAvistaOpen, setIsConfirmAvistaOpen] = useState(false); // <--- ESTADO NOVO
-  const [loadingAvista, setLoadingAvista] = useState(false); // <--- LOADING NOVO
-
-  // Estado para o Modal de Sucesso
+  // --- ESTADOS DE MODAIS ---
+  const [isPaymentOpen, setIsPaymentOpen] = useState(false);
+  const [loadingVenda, setLoadingVenda] = useState(false);
+  
+  // Bloqueio e Sucesso
+  const [modalBloqueioOpen, setModalBloqueioOpen] = useState(false);
+  const [clienteBloqueadoTemp, setClienteBloqueadoTemp] = useState<Cliente | null>(null);
   const [sucessoOpen, setSucessoOpen] = useState(false);
+  
+  // CORREÇÃO: Agora guardamos o ID e a FORMA REAL (ex: 'pix', 'dinheiro')
   const [ultimaVendaId, setUltimaVendaId] = useState<string | null>(null);
-  const [tipoUltimaVenda, setTipoUltimaVenda] = useState<'avista' | 'crediario'>('avista');
+  const [formaPagamentoReal, setFormaPagamentoReal] = useState<string>(""); 
 
-  // Cliente Consumidor Final (Cache)
+  // Cliente Padrão (Cache)
   const [consumidorFinal, setConsumidorFinal] = useState<Cliente | null>(null);
 
-  // Carregar Consumidor Final ao iniciar
+  // 1. Carregar Consumidor Final e Produtos
   useEffect(() => {
-    async function loadDefaults() {
-      const { data } = await supabase
+    async function loadInitialData() {
+      const { data: clienteData } = await supabase
         .from("clientes")
         .select("*")
         .or('cpf.eq.000.000.000-00,nome.eq.Consumidor Final')
         .single();
       
-      if (data) setConsumidorFinal(data);
+      if (clienteData) setConsumidorFinal(clienteData);
+
+      const { data: produtosData } = await supabase
+        .from("produtos")
+        .select("*")
+        .order("nome");
+      
+      setProdutosDb(produtosData || []);
+      setLoadingProdutos(false);
     }
-    loadDefaults();
+    loadInitialData();
   }, []);
 
-  // Autocomplete de Clientes
+  // 2. Busca de Clientes
   useEffect(() => {
     async function searchClientes() {
       if (buscaCliente.length < 2) {
@@ -79,6 +82,19 @@ export default function PDVPage() {
     return () => clearTimeout(timeoutId);
   }, [buscaCliente]);
 
+  const selecionarCliente = (cliente: Cliente) => {
+    if (cliente.status === 'bloqueado') {
+        setClienteBloqueadoTemp(cliente);
+        setModalBloqueioOpen(true);
+        setMostrarListaClientes(false);
+        return;
+    }
+    setClienteSelecionado(cliente);
+    setMostrarListaClientes(false);
+    setBuscaCliente("");
+    toast.success(`Cliente ${cliente.nome} selecionado.`);
+  };
+
   const adicionarAoCarrinho = (produto: Produto) => {
     setCarrinho((prev) => {
       const itemExistente = prev.find((item) => item.id === produto.id);
@@ -90,112 +106,118 @@ export default function PDVPage() {
       return [...prev, { ...produto, quantidade: 1 }];
     });
     toast.success(`${produto.nome} adicionado!`);
+    setBuscaProduto("");
   };
 
   const removerDoCarrinho = (id: string) => {
     setCarrinho((prev) => prev.filter((item) => item.id !== id));
   };
 
-  // Funções de Limpeza e Sucesso
-  const handleVendaConcluida = (vendaId: string, tipo: 'avista' | 'crediario') => {
-    setCarrinho([]);
-    setClienteSelecionado(null);
-    setBuscaCliente("");
-    setIsCheckoutOpen(false);
-    setIsConfirmAvistaOpen(false); // Fecha o modal de confirmação
-    
-    // Abre o modal de sucesso
-    setUltimaVendaId(vendaId);
-    setTipoUltimaVenda(tipo);
-    setSucessoOpen(true);
-  };
+  // --- PROCESSAMENTO DA VENDA ---
+  const processarVenda = async (dadosPagamento: any) => {
+    setLoadingVenda(true);
+    const clienteFinal = clienteSelecionado || consumidorFinal;
 
-  const totalCarrinho = carrinho.reduce((acc, item) => acc + (item.preco * item.quantidade), 0);
-
-  const produtosFiltrados = MOCK_PRODUTOS.filter(p => 
-    p.nome.toLowerCase().includes(buscaProduto.toLowerCase())
-  );
-
-  // --- PASSO 1: ABRIR MODAL DE CONFIRMAÇÃO ---
-  const handleBotaoAvista = () => {
-    if (!carrinho.length) {
-      toast.error("Carrinho vazio.");
-      return;
-    }
-    setIsConfirmAvistaOpen(true);
-  };
-
-  // --- PASSO 2: EXECUTAR A VENDA (Chamado pelo Modal) ---
-  const executarVendaAvista = async () => {
-    setLoadingAvista(true);
-
-    // Se não tem cliente, usa o Consumidor Final
-    let clienteParaVenda = clienteSelecionado;
-    
-    if (!clienteParaVenda) {
-      if (consumidorFinal) {
-        clienteParaVenda = consumidorFinal;
-      } else {
-        toast.error("Erro crítico: Cliente 'Consumidor Final' não encontrado.");
-        setLoadingAvista(false);
+    if (!clienteFinal) {
+        toast.error("Erro: Cliente não identificado.");
+        setLoadingVenda(false);
         return;
-      }
     }
 
     try {
-      const pontosGanhos = Math.floor(totalCarrinho / 10);
+        const pontosGanhos = dadosPagamento.forma_pagamento !== 'crediario' ? Math.floor(totalCarrinho / 10) : 0;
 
-      // 1. Venda Header
-      const { data: vendaData, error: vendaError } = await supabase
-        .from("vendas")
-        .insert({
-          cliente_id: clienteParaVenda.id,
-          valor_total: totalCarrinho,
-          forma_pagamento: "avista",
-          pontos_gerados: pontosGanhos
-        })
-        .select()
-        .single();
+        // 1. Criar Venda
+        const { data: venda, error: errVenda } = await supabase.from("vendas").insert({
+            cliente_id: clienteFinal.id,
+            valor_total: totalCarrinho,
+            forma_pagamento: dadosPagamento.forma_pagamento, 
+            pontos_gerados: pontosGanhos
+        }).select().single();
 
-      if (vendaError) throw vendaError;
-      const vendaId = vendaData.id;
+        if (errVenda) throw errVenda;
 
-      // 2. Itens
-      const itensParaInserir = carrinho.map(item => ({
-        venda_id: vendaId,
-        produto_id: item.id,
-        produto_nome: item.nome,
-        quantidade: item.quantidade,
-        valor_unitario: item.preco
-      }));
-      await supabase.from("itens_venda").insert(itensParaInserir);
+        // 2. Inserir Itens
+        const itens = carrinho.map(item => ({
+            venda_id: venda.id,
+            produto_id: item.id,
+            produto_nome: item.nome, 
+            quantidade: item.quantidade,
+            valor_unitario: item.preco
+        }));
+        
+        const { error: errItens } = await supabase.from("itens_venda").insert(itens);
+        
+        if (errItens) {
+            await supabase.from("vendas").delete().eq("id", venda.id);
+            throw new Error(`Erro ao salvar itens: ${errItens.message}`);
+        }
 
-      // 3. Financeiro (Parcela única paga)
-      await supabase.from("parcelas").insert({
-        venda_id: vendaId,
-        cliente_id: clienteParaVenda.id,
-        numero_parcela: 1,
-        data_vencimento: new Date().toISOString(),
-        data_pagamento: new Date().toISOString(),
-        valor: totalCarrinho,
-        status: "pago"
-      });
+        // 3. Gerar Parcelas
+        const parcelas = [];
+        const numParcelas = dadosPagamento.detalhes.parcelas;
+        const valorParcela = totalCarrinho / numParcelas;
 
-      // 4. Pontos (Só atualiza se NÃO for consumidor final genérico, opcional)
-      // Aqui atualizamos sempre, pois mesmo consumidor final pode ter pontos se configurado
-      const novosPontos = (clienteParaVenda.pontos_acumulados || 0) + pontosGanhos;
-      await supabase.from("clientes").update({ pontos_acumulados: novosPontos }).eq("id", clienteParaVenda.id);
+        for (let i = 1; i <= numParcelas; i++) {
+            let vencimento = new Date();
+            let status = 'pago'; 
+            let dataPagamento = new Date().toISOString();
 
-      // SUCESSO!
-      handleVendaConcluida(vendaId, 'avista');
+            if (dadosPagamento.forma_pagamento === 'crediario') {
+                status = 'pendente';
+                dataPagamento = null as any;
+                
+                if (dadosPagamento.detalhes.primeiro_vencimento) {
+                    const dataBase = new Date(dadosPagamento.detalhes.primeiro_vencimento);
+                    vencimento = new Date(dataBase); 
+                    vencimento.setMonth(vencimento.getMonth() + (i - 1));
+                } else {
+                    vencimento.setDate(vencimento.getDate() + (i * 30));
+                }
+            }
 
-    } catch (error) {
-      console.error(error);
-      toast.error("Erro ao processar venda à vista.");
+            parcelas.push({
+                venda_id: venda.id,
+                cliente_id: clienteFinal.id,
+                numero_parcela: i,
+                valor: valorParcela,
+                data_vencimento: vencimento.toISOString(),
+                data_pagamento: dataPagamento,
+                status: status
+            });
+        }
+        
+        const { error: errParcelas } = await supabase.from("parcelas").insert(parcelas);
+        if (errParcelas) throw errParcelas;
+
+        // 4. Pontos
+        if (pontosGanhos > 0) {
+            const novosPontos = (clienteFinal.pontos_acumulados || 0) + pontosGanhos;
+            await supabase.from("clientes").update({ pontos_acumulados: novosPontos }).eq("id", clienteFinal.id);
+        }
+
+        // 5. Atualizar Estado para o Modal
+        setUltimaVendaId(venda.id);
+        // AQUI ESTAVA O PROBLEMA: Antes salvava apenas 'avista' ou 'crediario'.
+        // Agora salvamos o dado exato (ex: 'pix', 'dinheiro')
+        setFormaPagamentoReal(dadosPagamento.forma_pagamento);
+        
+        setCarrinho([]);
+        setClienteSelecionado(null);
+        setBuscaCliente("");
+        setIsPaymentOpen(false);
+        setSucessoOpen(true);
+
+    } catch (err: any) {
+        console.error(err);
+        toast.error(`Falha na venda: ${err.message}`);
     } finally {
-      setLoadingAvista(false);
+        setLoadingVenda(false);
     }
   };
+
+  const totalCarrinho = carrinho.reduce((acc, item) => acc + (item.preco * item.quantidade), 0);
+  const produtosFiltrados = produtosDb.filter(p => p.nome.toLowerCase().includes(buscaProduto.toLowerCase()));
 
   return (
     <div className="flex flex-col lg:flex-row h-auto lg:h-[calc(100vh-4rem)] gap-6 pb-20 lg:pb-0">
@@ -216,38 +238,57 @@ export default function PDVPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 overflow-y-auto pr-2 pb-20">
-          {produtosFiltrados.map((produto) => (
-            <button
-              key={produto.id}
-              onClick={() => adicionarAoCarrinho(produto)}
-              className="bg-white p-4 rounded-xl border border-gray-200 hover:border-blue-500 hover:shadow-md transition-all text-left group flex flex-col justify-between h-40"
-            >
-              <div>
-                <span className="text-xs font-bold text-gray-400 mb-1 block">COD: {produto.id}</span>
-                <h3 className="font-semibold text-gray-800 leading-tight group-hover:text-blue-600 transition-colors">
-                  {produto.nome}
-                </h3>
-              </div>
-              <div className="mt-4">
-                <span className="text-lg font-bold text-green-700">
-                  {produto.preco.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                </span>
-              </div>
-            </button>
-          ))}
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 overflow-y-auto pr-2 pb-20 content-start">
+          {loadingProdutos ? (
+            <div className="col-span-full py-12 flex flex-col items-center text-gray-400 gap-2">
+              <Loader2 className="animate-spin" size={32} />
+              <p>Carregando catálogo...</p>
+            </div>
+          ) : produtosFiltrados.length === 0 ? (
+            <div className="col-span-full py-12 flex flex-col items-center text-gray-400 gap-2">
+              <Package size={48} className="opacity-20" />
+              <p>Nenhum produto encontrado.</p>
+            </div>
+          ) : (
+            produtosFiltrados.map((produto) => (
+              <button
+                key={produto.id}
+                onClick={() => adicionarAoCarrinho(produto)}
+                className="bg-white p-4 rounded-xl border border-gray-200 hover:border-blue-500 hover:shadow-md transition-all text-left group flex flex-col justify-between h-40"
+              >
+                <div>
+                  <div className="flex justify-between items-start">
+                    <span className="text-[10px] font-bold text-gray-400 mb-1 block uppercase">COD: {produto.id.slice(0,4)}</span>
+                    {(produto.estoque !== undefined) && (
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                        produto.estoque > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                      }`}>
+                        {produto.estoque} un
+                      </span>
+                    )}
+                  </div>
+                  <h3 className="font-semibold text-gray-800 leading-tight group-hover:text-blue-600 transition-colors line-clamp-2">
+                    {produto.nome}
+                  </h3>
+                </div>
+                <div className="mt-2">
+                  <span className="text-lg font-bold text-green-700">
+                    {produto.preco.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                  </span>
+                </div>
+              </button>
+            ))
+          )}
         </div>
       </div>
 
       {/* LADO DIREITO: Carrinho */}
       <div className="w-full md:w-[400px] bg-white rounded-xl shadow-lg border border-gray-200 flex flex-col h-full overflow-hidden">
-        
         <div className="p-4 bg-gray-50 border-b border-gray-200 space-y-3">
           <h2 className="font-bold text-gray-800 flex items-center gap-2">
             <ShoppingCart size={20} className="text-blue-600" />
             Carrinho
           </h2>
-
           <div className="relative">
             {clienteSelecionado ? (
               <div className="flex items-center justify-between bg-blue-50 border border-blue-200 p-3 rounded-lg">
@@ -261,10 +302,7 @@ export default function PDVPage() {
                   </div>
                 </div>
                 <button 
-                  onClick={() => {
-                    setClienteSelecionado(null);
-                    setBuscaCliente("");
-                  }}
+                  onClick={() => { setClienteSelecionado(null); setBuscaCliente(""); }}
                   className="text-blue-400 hover:text-red-500 transition-colors"
                 >
                   <Trash2 size={16} />
@@ -274,7 +312,7 @@ export default function PDVPage() {
               <div className="relative">
                 <input 
                   type="text"
-                  placeholder="Cliente (Deixe vazio para Consumidor Final)"
+                  placeholder="Cliente (Vazio = Consumidor Final)"
                   value={buscaCliente}
                   onChange={(e) => setBuscaCliente(e.target.value)}
                   className="w-full pl-3 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
@@ -284,14 +322,14 @@ export default function PDVPage() {
                     {clientes.map(cliente => (
                       <button
                         key={cliente.id}
-                        onClick={() => {
-                          setClienteSelecionado(cliente);
-                          setMostrarListaClientes(false);
-                        }}
-                        className="w-full text-left px-4 py-2 hover:bg-gray-50 text-sm border-b border-gray-50 last:border-0"
+                        onClick={() => selecionarCliente(cliente)}
+                        className={`w-full text-left px-4 py-2 hover:bg-gray-50 text-sm border-b border-gray-50 last:border-0 flex justify-between items-center ${cliente.status === 'bloqueado' ? 'bg-red-50 hover:bg-red-100' : ''}`}
                       >
-                        <p className="font-medium text-gray-800">{cliente.nome}</p>
-                        <p className="text-xs text-gray-500">CPF: {cliente.cpf}</p>
+                        <div>
+                            <p className="font-medium text-gray-800">{cliente.nome}</p>
+                            <p className="text-xs text-gray-500">CPF: {cliente.cpf}</p>
+                        </div>
+                        {cliente.status === 'bloqueado' && <span className="text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded font-bold border border-red-200">BLOQUEADO</span>}
                       </button>
                     ))}
                   </div>
@@ -311,7 +349,7 @@ export default function PDVPage() {
             carrinho.map((item) => (
               <div key={item.id} className="flex justify-between items-center bg-gray-50 p-3 rounded-lg">
                 <div>
-                  <p className="text-sm font-medium text-gray-800">{item.nome}</p>
+                  <p className="text-sm font-medium text-gray-800 line-clamp-1">{item.nome}</p>
                   <p className="text-xs text-gray-500">
                     {item.quantidade}x {item.preco.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                   </p>
@@ -320,10 +358,7 @@ export default function PDVPage() {
                   <span className="font-bold text-gray-700 text-sm">
                     {(item.preco * item.quantidade).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                   </span>
-                  <button 
-                    onClick={() => removerDoCarrinho(item.id)}
-                    className="text-gray-400 hover:text-red-500 transition-colors"
-                  >
+                  <button onClick={() => removerDoCarrinho(item.id)} className="text-gray-400 hover:text-red-500 transition-colors">
                     <Trash2 size={16} />
                   </button>
                 </div>
@@ -340,57 +375,44 @@ export default function PDVPage() {
             </span>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <button 
-              onClick={handleBotaoAvista} // <--- CHAMA O MODAL, NÃO A LÓGICA DIRETA
-              disabled={carrinho.length === 0}
-              className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Banknote size={20} />
-              À Vista
-            </button>
-            <button 
-              disabled={!clienteSelecionado || carrinho.length === 0}
-              onClick={() => setIsCheckoutOpen(true)}
-              className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white py-3 rounded-lg font-medium transition-colors"
-            >
-              <CreditCard size={20} />
-              Crediário
-            </button>
-          </div>
-          {!clienteSelecionado && (
-             <p className="text-xs text-center text-gray-400 mt-2">Venda s/ cliente será registrada como Consumidor Final.</p>
-          )}
+          <button 
+            onClick={() => setIsPaymentOpen(true)}
+            disabled={carrinho.length === 0}
+            className="w-full py-4 bg-green-600 hover:bg-green-700 text-white rounded-xl font-bold text-lg shadow-lg shadow-green-200 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all transform hover:scale-[1.02]"
+          >
+            {loadingVenda ? <Loader2 className="animate-spin" /> : <CheckCircle size={24} />}
+            Finalizar Venda
+          </button>
+          {!clienteSelecionado && <p className="text-xs text-center text-gray-400 mt-2">Venda s/ cliente será registrada como Consumidor Final.</p>}
         </div>
-
       </div>
 
-      {/* MODAL CHECKOUT (Crediário) */}
-      <CheckoutModal 
-        isOpen={isCheckoutOpen}
-        onClose={() => setIsCheckoutOpen(false)}
+      <PaymentFlowModal 
+        isOpen={isPaymentOpen}
+        onClose={() => setIsPaymentOpen(false)}
+        onConfirm={processarVenda}
+        total={totalCarrinho}
         cliente={clienteSelecionado}
-        carrinho={carrinho}
-        total={totalCarrinho}
-        onSuccess={(vendaId) => handleVendaConcluida(vendaId, 'crediario')}
+        loading={loadingVenda}
       />
 
-      {/* NOVO: MODAL CONFIRMAÇÃO À VISTA */}
-      <ConfirmAvistaModal
-        isOpen={isConfirmAvistaOpen}
-        onClose={() => setIsConfirmAvistaOpen(false)}
-        onConfirm={executarVendaAvista}
-        total={totalCarrinho}
-        clienteNome={clienteSelecionado?.nome || null}
-        loading={loadingAvista}
-      />
-
-      {/* MODAL SUCESSO (Impressão) */}
+      {/* CORREÇÃO: Passamos formaPagamentoReal para o modal */}
       <VendaSucessoModal 
         isOpen={sucessoOpen}
         onClose={() => setSucessoOpen(false)}
         vendaId={ultimaVendaId}
-        tipoVenda={tipoUltimaVenda}
+        formaPagamento={formaPagamentoReal}
+      />
+
+      <ConfirmModal 
+        isOpen={modalBloqueioOpen}
+        onClose={() => setModalBloqueioOpen(false)}
+        onConfirm={() => setModalBloqueioOpen(false)}
+        title="Cliente Bloqueado 🚫"
+        description={`O cliente ${clienteBloqueadoTemp?.nome} possui restrições no cadastro.`}
+        confirmText="Entendi"
+        variant="warning"
+        showCancel={false}
       />
     </div>
   );

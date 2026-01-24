@@ -18,21 +18,24 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="pt-br">
-      <body className={`${inter.className} bg-gray-50 antialiased`}>
-        {/* Container Flexível */}
-        <div className="flex min-h-screen">
+      {/* 1. h-screen: Força o corpo a ter EXATAMENTE a altura da janela do navegador.
+         2. overflow-hidden: Impede que a janela inteira role (trava o scroll do navegador).
+      */}
+      <body className={`${inter.className} bg-gray-50 antialiased h-screen overflow-hidden`}>
+        
+        {/* Container Flexível ocupa 100% da altura */}
+        <div className="flex h-full w-full">
           
-          {/* Sidebar (Agora se comporta bem no mobile) */}
+          {/* A Sidebar fica parada aqui à esquerda */}
           <Sidebar />
 
-          {/* CONTEÚDO PRINCIPAL 
-             - mt-14: Dá espaço para a barra de menu no topo (só no mobile)
-             - md:mt-0: Remove esse espaço no desktop
-             - md:ml-0: A Sidebar agora é flex item no desktop, não precisa de margin fixa se usarmos flex normal, 
-               MAS como a Sidebar no código acima usa 'md:static', ela ocupa espaço real no fluxo.
-               Então podemos remover a 'ml-64' fixa e deixar o flexbox cuidar do layout.
+          {/* CONTEÚDO PRINCIPAL (Área de Rolagem)
+             - flex-1: Ocupa todo o espaço restante na largura.
+             - h-full: Ocupa toda a altura disponível.
+             - overflow-y-auto: AQUI É O SEGREDO. Se o conteúdo for maior que a tela,
+               a barra de rolagem aparece SÓ AQUI, mantendo a sidebar fixa.
           */}
-          <main className="flex-1 p-4 md:p-8 mt-14 md:mt-0 w-full overflow-x-hidden">
+          <main className="flex-1 h-full overflow-y-auto p-4 md:p-8 mt-14 md:mt-0 w-full bg-gray-50">
             {children}
           </main>
         </div>
