@@ -33,7 +33,6 @@ export default function PDVPage() {
   const [clienteBloqueadoTemp, setClienteBloqueadoTemp] = useState<Cliente | null>(null);
   const [sucessoOpen, setSucessoOpen] = useState(false);
   
-  // CORREÇÃO: Agora guardamos o ID e a FORMA REAL (ex: 'pix', 'dinheiro')
   const [ultimaVendaId, setUltimaVendaId] = useState<string | null>(null);
   const [formaPagamentoReal, setFormaPagamentoReal] = useState<string>(""); 
 
@@ -125,19 +124,37 @@ export default function PDVPage() {
     }
 
     try {
-        const pontosGanhos = dadosPagamento.forma_pagamento !== 'crediario' ? Math.floor(totalCarrinho / 10) : 0;
+        // --- 1. GAMIFICAÇÃO: RESGATAR PONTOS (Se houver) ---
+        // Se o cliente usou pontos, descontamos do saldo dele ANTES de salvar a venda.
+        if (dadosPagamento.detalhes.pontos_usados > 0 && clienteSelecionado?.id) {
+           const { error: erroResgate } = await supabase
+             .rpc('resgatar_pontos', { 
+                p_cliente_id: clienteSelecionado.id, 
+                p_pontos: dadosPagamento.detalhes.pontos_usados 
+             });
 
-        // 1. Criar Venda
+           if (erroResgate) {
+              console.error("Erro ao descontar pontos:", erroResgate);
+              toast.error("Erro ao usar pontos. Venda cancelada.");
+              setLoadingVenda(false);
+              return;
+           }
+        }
+
+        // --- 2. CRIAR VENDA ---
+        // IMPORTANTE: Salvamos o 'desconto' para que o gatilho calcule os NOVOS pontos corretamente
+        // (Pontos Ganhos = Valor Total - Desconto)
         const { data: venda, error: errVenda } = await supabase.from("vendas").insert({
             cliente_id: clienteFinal.id,
             valor_total: totalCarrinho,
+            desconto: dadosPagamento.detalhes.desconto_aplicado || 0, // <--- CAMPO IMPORTANTE
             forma_pagamento: dadosPagamento.forma_pagamento, 
-            pontos_gerados: pontosGanhos
+            // pontos_gerados: O gatilho do banco calcula isso agora automaticamente!
         }).select().single();
 
         if (errVenda) throw errVenda;
 
-        // 2. Inserir Itens
+        // --- 3. INSERIR ITENS ---
         const itens = carrinho.map(item => ({
             venda_id: venda.id,
             produto_id: item.id,
@@ -149,14 +166,17 @@ export default function PDVPage() {
         const { error: errItens } = await supabase.from("itens_venda").insert(itens);
         
         if (errItens) {
-            await supabase.from("vendas").delete().eq("id", venda.id);
+            await supabase.from("vendas").delete().eq("id", venda.id); // Rollback manual simples
             throw new Error(`Erro ao salvar itens: ${errItens.message}`);
         }
 
-        // 3. Gerar Parcelas
+        // --- 4. GERAR PARCELAS ---
         const parcelas = [];
         const numParcelas = dadosPagamento.detalhes.parcelas;
-        const valorParcela = totalCarrinho / numParcelas;
+        
+        // O valor da parcela deve considerar o valor JÁ DESCONTADO
+        const valorFinalVenda = totalCarrinho - (dadosPagamento.detalhes.desconto_aplicado || 0);
+        const valorParcela = valorFinalVenda / numParcelas;
 
         for (let i = 1; i <= numParcelas; i++) {
             let vencimento = new Date();
@@ -190,16 +210,8 @@ export default function PDVPage() {
         const { error: errParcelas } = await supabase.from("parcelas").insert(parcelas);
         if (errParcelas) throw errParcelas;
 
-        // 4. Pontos
-        if (pontosGanhos > 0) {
-            const novosPontos = (clienteFinal.pontos_acumulados || 0) + pontosGanhos;
-            await supabase.from("clientes").update({ pontos_acumulados: novosPontos }).eq("id", clienteFinal.id);
-        }
-
-        // 5. Atualizar Estado para o Modal
+        // --- 5. ATUALIZAR ESTADO ---
         setUltimaVendaId(venda.id);
-        // AQUI ESTAVA O PROBLEMA: Antes salvava apenas 'avista' ou 'crediario'.
-        // Agora salvamos o dado exato (ex: 'pix', 'dinheiro')
         setFormaPagamentoReal(dadosPagamento.forma_pagamento);
         
         setCarrinho([]);
@@ -207,6 +219,7 @@ export default function PDVPage() {
         setBuscaCliente("");
         setIsPaymentOpen(false);
         setSucessoOpen(true);
+        toast.success("Venda realizada com sucesso!");
 
     } catch (err: any) {
         console.error(err);
@@ -396,7 +409,6 @@ export default function PDVPage() {
         loading={loadingVenda}
       />
 
-      {/* CORREÇÃO: Passamos formaPagamentoReal para o modal */}
       <VendaSucessoModal 
         isOpen={sucessoOpen}
         onClose={() => setSucessoOpen(false)}

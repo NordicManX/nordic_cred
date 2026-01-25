@@ -176,7 +176,7 @@ export default function ImprimirReciboPage() {
           </div>
           <p className="font-bold text-sm uppercase">PAGAMENTO CONFIRMADO</p>
           <p className="text-[10px] mt-4 uppercase">Obrigado pela preferência!</p>
-          <p className="text-[10px] font-bold">www.nordictech.com.br</p>
+          <p className="text-[10px] font-bold">www.nordictech.tech</p>
         </div>
 
       </div>

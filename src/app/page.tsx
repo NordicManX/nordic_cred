@@ -4,16 +4,21 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/src/lib/supabase";
 import { 
   DollarSign, Users, TrendingUp, AlertCircle, 
-  Wallet, ArrowUpRight, ArrowDownRight, ShoppingBag, Loader2
+  Wallet, ArrowUpRight, ArrowDownRight, ShoppingBag, Loader2, Target
 } from "lucide-react";
-import { startOfMonth, endOfMonth, format, isBefore, parseISO, eachDayOfInterval, getDate, isSameDay } from "date-fns";
+import { startOfMonth, endOfMonth, format, isBefore, parseISO, eachDayOfInterval, getDate, getMonth, getYear } from "date-fns";
 import Link from "next/link";
+import confetti from "canvas-confetti";
 
 export default function DashboardPage() {
   const supabase = createClient();
   const [loading, setLoading] = useState(true);
   
-  // KPIs (Indicadores)
+  // META DIÁRIA
+  const META_DIARIA = 2000.00;
+  const [vendasHoje, setVendasHoje] = useState(0);
+
+  // KPIs
   const [kpis, setKpis] = useState({
     vendasMes: 0,
     recebidoMes: 0,
@@ -22,15 +27,34 @@ export default function DashboardPage() {
     novosClientes: 0
   });
 
-  // Gráfico
+  // Gráfico e Listas
   const [dadosGrafico, setDadosGrafico] = useState<{dia: number, valor: number}[]>([]);
-  
-  // Lista Recente
   const [ultimasVendas, setUltimasVendas] = useState<any[]>([]);
 
   useEffect(() => {
     carregarDados();
   }, []);
+
+  useEffect(() => {
+    if (!loading && vendasHoje >= META_DIARIA) {
+        dispararConfetes();
+    }
+  }, [vendasHoje, loading]);
+
+  const dispararConfetes = () => {
+    const duration = 3 * 1000;
+    const animationEnd = Date.now() + duration;
+    const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 0 };
+    const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
+
+    const interval: any = setInterval(function() {
+      const timeLeft = animationEnd - Date.now();
+      if (timeLeft <= 0) return clearInterval(interval);
+      const particleCount = 50 * (timeLeft / duration);
+      confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 } });
+      confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 } });
+    }, 250);
+  };
 
   async function carregarDados() {
     setLoading(true);
@@ -39,56 +63,41 @@ export default function DashboardPage() {
     const fimMes = endOfMonth(hoje).toISOString();
 
     try {
-      // 1. BUSCAR VENDAS DO MÊS (Para Faturamento e Gráfico)
+      // 1. BUSCAR VENDAS (Traz tudo do mês para filtrar no front)
       const { data: vendasMes, error: errVendas } = await supabase
         .from("vendas")
-        .select("created_at, valor_total")
-        .gte("created_at", inicioMes)
-        .lte("created_at", fimMes);
+        .select("data_venda, valor_total") 
+        .gte("data_venda", inicioMes)      
+        .lte("data_venda", fimMes);        
 
       if (errVendas) throw errVendas;
 
-      // 2. BUSCAR PARCELAS (Para Recebimento, A Receber e Atraso)
-      // Buscamos parcelas pagas este mês OU pendentes gerais
-      const { data: parcelas, error: errParcelas } = await supabase
-        .from("parcelas")
-        .select("valor, status, data_pagamento, data_vencimento");
+      // 2. BUSCAR OUTROS DADOS
+      const { data: parcelas } = await supabase.from("parcelas").select("valor, status, data_pagamento, data_vencimento");
+      const { count: countClientes } = await supabase.from("clientes").select("*", { count: 'exact', head: true }).gte("created_at", inicioMes).neq("nome", "Consumidor Final");
+      const { data: ultimas } = await supabase.from("vendas").select("id, valor_total, data_venda, clientes(nome)").order("data_venda", { ascending: false }).limit(5);
 
-      if (errParcelas) throw errParcelas;
+      // --- PROCESSAMENTO ---
 
-      // 3. BUSCAR NOVOS CLIENTES
-      const { count: countClientes } = await supabase
-        .from("clientes")
-        .select("*", { count: 'exact', head: true })
-        .gte("created_at", inicioMes)
-        .neq("nome", "Consumidor Final"); // Ignora o consumidor padrão
-
-      // 4. BUSCAR ÚLTIMAS VENDAS (Para tabela rápida)
-      const { data: ultimas } = await supabase
-        .from("vendas")
-        .select("id, valor_total, created_at, clientes(nome)")
-        .order("created_at", { ascending: false })
-        .limit(5);
-
-      // --- PROCESSAMENTO DOS DADOS ---
-
-      // A. Faturamento (Soma das vendas do mês)
+      // A. Vendas Totais e Hoje
       const totalVendasMes = vendasMes?.reduce((acc, v) => acc + v.valor_total, 0) || 0;
+      
+      // Filtro manual seguro para "Hoje"
+      const diaHoje = getDate(hoje);
+      const mesHoje = getMonth(hoje);
+      const anoHoje = getYear(hoje);
 
-      // B. Recebido Real (Parcelas pagas dentro deste mês)
-      const totalRecebidoMes = parcelas
-        ?.filter(p => p.status === 'pago' && p.data_pagamento >= inicioMes && p.data_pagamento <= fimMes)
-        .reduce((acc, p) => acc + p.valor, 0) || 0;
+      const totalHoje = vendasMes?.filter(v => {
+          const d = parseISO(v.data_venda);
+          return getDate(d) === diaHoje && getMonth(d) === mesHoje && getYear(d) === anoHoje;
+      }).reduce((acc, v) => acc + v.valor_total, 0) || 0;
+      
+      setVendasHoje(totalHoje);
 
-      // C. A Receber (Tudo que está pendente no sistema)
-      const totalPendencia = parcelas
-        ?.filter(p => p.status === 'pendente')
-        .reduce((acc, p) => acc + p.valor, 0) || 0;
-
-      // D. Em Atraso (Pendente e vencido antes de hoje)
-      const totalAtraso = parcelas
-        ?.filter(p => p.status === 'pendente' && isBefore(parseISO(p.data_vencimento), hoje))
-        .reduce((acc, p) => acc + p.valor, 0) || 0;
+      // B. Financeiro
+      const totalRecebidoMes = parcelas?.filter(p => p.status === 'pago' && p.data_pagamento >= inicioMes && p.data_pagamento <= fimMes).reduce((acc, p) => acc + p.valor, 0) || 0;
+      const totalPendencia = parcelas?.filter(p => p.status === 'pendente').reduce((acc, p) => acc + p.valor, 0) || 0;
+      const totalAtraso = parcelas?.filter(p => p.status === 'pendente' && isBefore(parseISO(p.data_vencimento), hoje)).reduce((acc, p) => acc + p.valor, 0) || 0;
 
       setKpis({
         vendasMes: totalVendasMes,
@@ -100,17 +109,27 @@ export default function DashboardPage() {
       
       if (ultimas) setUltimasVendas(ultimas);
 
-      // E. Montar Gráfico (Dia a Dia do Mês Atual)
-      const diasDoMes = eachDayOfInterval({ start: startOfMonth(hoje), end: hoje }); // Até hoje
-      const grafico = diasDoMes.map(dia => {
-        const vendasDoDia = vendasMes?.filter(v => isSameDay(parseISO(v.created_at), dia)) || [];
+      // C. MONTAR GRÁFICO (LÓGICA CORRIGIDA)
+      const diasDoMes = eachDayOfInterval({ start: startOfMonth(hoje), end: hoje }); 
+      
+      const grafico = diasDoMes.map(diaRef => {
+        // Compara dia, mês e ano explicitamente para evitar erros de fuso horário
+        const diaNum = getDate(diaRef);
+        const mesNum = getMonth(diaRef);
+        
+        const vendasDoDia = vendasMes?.filter(v => {
+            const d = parseISO(v.data_venda);
+            return getDate(d) === diaNum && getMonth(d) === mesNum;
+        }) || [];
+
         const totalDia = vendasDoDia.reduce((acc, v) => acc + v.valor_total, 0);
-        return { dia: getDate(dia), valor: totalDia };
+        return { dia: diaNum, valor: totalDia };
       });
+      
       setDadosGrafico(grafico);
 
-    } catch (error) {
-      console.error("Erro ao carregar dashboard:", error);
+    } catch (error: any) {
+      console.error("Erro dashboard:", error);
     } finally {
       setLoading(false);
     }
@@ -119,14 +138,17 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center text-blue-600 gap-2">
-        <Loader2 className="animate-spin" /> Atualizando indicadores...
+        <Loader2 className="animate-spin" /> Carregando...
       </div>
     );
   }
 
+  const porcentagemMeta = Math.min(100, (vendasHoje / META_DIARIA) * 100);
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       
+      {/* Header */}
       <div className="flex justify-between items-end">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
@@ -134,126 +156,77 @@ export default function DashboardPage() {
         </div>
         <button 
           onClick={carregarDados} 
-          className="text-sm text-blue-600 hover:underline cursor-pointer"
+          className="text-sm text-blue-600 hover:underline cursor-pointer flex items-center gap-1"
         >
-          Atualizar dados
+          <Loader2 size={12} className={loading ? "animate-spin" : "hidden"} /> Atualizar
         </button>
       </div>
 
-      {/* --- CARDS DE KPI --- */}
+      {/* Meta do Dia */}
+      <div className="bg-gradient-to-r from-gray-900 to-gray-800 rounded-xl p-6 text-white shadow-lg relative overflow-hidden">
+        <div className="flex justify-between items-center relative z-10">
+          <div>
+             <h2 className="text-lg font-bold flex items-center gap-2">
+                <Target className="text-yellow-400" /> Meta do Dia
+             </h2>
+             <p className="text-gray-400 text-sm">
+                Objetivo: {META_DIARIA.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+             </p>
+          </div>
+          <div className="text-right">
+             <p className="text-3xl font-bold text-yellow-400">
+                {vendasHoje.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+             </p>
+             <p className="text-xs text-gray-400">{porcentagemMeta.toFixed(1)}% atingido</p>
+          </div>
+        </div>
+        <div className="mt-4 h-3 bg-gray-700 rounded-full overflow-hidden relative z-10">
+           <div 
+             className="h-full bg-gradient-to-r from-blue-500 to-green-400 transition-all duration-1000 ease-out shadow-[0_0_10px_rgba(74,222,128,0.5)]" 
+             style={{ width: `${porcentagemMeta}%` }}
+           />
+        </div>
+        <Target size={150} className="absolute -bottom-10 -right-10 opacity-5 text-white" />
+      </div>
+
+      {/* KPIs */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        
-        {/* 1. Vendas (Volume) */}
-        <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Vendas (Mês)</p>
-              <h3 className="text-2xl font-bold text-gray-900 mt-2">
-                {kpis.vendasMes.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-              </h3>
-            </div>
-            <div className="bg-blue-100 p-2 rounded-lg text-blue-600">
-              <ShoppingBag size={20} />
-            </div>
-          </div>
-          <div className="mt-4 flex items-center text-xs text-gray-400">
-            <span className="text-blue-600 font-bold flex items-center gap-1">
-              <TrendingUp size={12}/> Volume
-            </span>
-            <span className="ml-2">Faturamento bruto</span>
-          </div>
-        </div>
-
-        {/* 2. Recebimento (Caixa Real) */}
-        <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Caixa (Recebido)</p>
-              <h3 className="text-2xl font-bold text-green-600 mt-2">
-                {kpis.recebidoMes.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-              </h3>
-            </div>
-            <div className="bg-green-100 p-2 rounded-lg text-green-600">
-              <Wallet size={20} />
-            </div>
-          </div>
-          <div className="mt-4 flex items-center text-xs text-gray-400">
-            <span className="text-green-600 font-bold flex items-center gap-1">
-              <ArrowUpRight size={12}/> Entradas
-            </span>
-            <span className="ml-2">Efetivamente pago</span>
-          </div>
-        </div>
-
-        {/* 3. A Receber (Carteira) */}
-        <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">A Receber (Geral)</p>
-              <h3 className="text-2xl font-bold text-blue-900 mt-2">
-                {kpis.totalAReceber.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-              </h3>
-            </div>
-            <div className="bg-gray-100 p-2 rounded-lg text-gray-600">
-              <DollarSign size={20} />
-            </div>
-          </div>
-          <div className="mt-4 flex items-center text-xs text-gray-400">
-            <span className="text-gray-600 font-bold flex items-center gap-1">
-              Futuro
-            </span>
-            <span className="ml-2">Crediário pendente</span>
-          </div>
-        </div>
-
-        {/* 4. Inadimplência (Atrasados) */}
-        <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Em Atraso</p>
-              <h3 className="text-2xl font-bold text-red-600 mt-2">
-                {kpis.totalAtrasado.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-              </h3>
-            </div>
-            <div className="bg-red-100 p-2 rounded-lg text-red-600">
-              <AlertCircle size={20} />
-            </div>
-          </div>
-          <div className="mt-4 flex items-center text-xs text-gray-400">
-            <span className="text-red-600 font-bold flex items-center gap-1">
-              <ArrowDownRight size={12}/> Atenção
-            </span>
-            <span className="ml-2">Parcelas vencidas</span>
-          </div>
-        </div>
+        <KPICard title="Vendas (Mês)" value={kpis.vendasMes} icon={<ShoppingBag size={20}/>} sub="Volume Bruto" color="blue" />
+        <KPICard title="Caixa (Recebido)" value={kpis.recebidoMes} icon={<Wallet size={20}/>} sub="Entradas Reais" color="green" />
+        <KPICard title="A Receber" value={kpis.totalAReceber} icon={<DollarSign size={20}/>} sub="Carteira Futura" color="gray" />
+        <KPICard title="Em Atraso" value={kpis.totalAtrasado} icon={<AlertCircle size={20}/>} sub="Inadimplência" color="red" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* --- GRÁFICO SIMPLIFICADO --- */}
+        {/* GRÁFICO (CORRIGIDO) */}
         <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-          <h3 className="font-bold text-gray-800 mb-6">Desempenho de Vendas (Diário)</h3>
+          <h3 className="font-bold text-gray-800 mb-6">Desempenho Diário</h3>
           
           <div className="h-64 flex items-end gap-2 justify-between">
             {dadosGrafico.length === 0 ? (
                 <div className="w-full h-full flex items-center justify-center text-gray-400">Sem vendas este mês</div>
             ) : (
                 dadosGrafico.map((d) => {
-                    // Calcula altura relativa (max 100%)
                     const maxVal = Math.max(...dadosGrafico.map(i => i.valor), 100); 
-                    const altura = (d.valor / maxVal) * 100;
-                    
+                    // Garante que a barra apareça se tiver valor > 0 (mínimo 5%)
+                    let altura = (d.valor / maxVal) * 100;
+                    if (d.valor > 0 && altura < 5) altura = 5;
+
                     return (
-                        <div key={d.dia} className="flex-1 flex flex-col items-center gap-2 group cursor-default">
+                        <div key={d.dia} className="flex-1 flex flex-col items-center gap-2 group cursor-default h-full justify-end">
                             <div className="relative w-full flex items-end justify-center h-full">
                                 <div 
                                     style={{ height: `${altura}%` }} 
-                                    className={`w-full max-w-[30px] rounded-t-sm transition-all duration-500 ${d.valor > 0 ? 'bg-blue-500 group-hover:bg-blue-600' : 'bg-gray-100'}`}
+                                    className={`w-full max-w-[30px] rounded-t-sm transition-all duration-500 ${d.valor > 0 ? 'bg-blue-500 group-hover:bg-blue-600' : 'bg-gray-100 h-1'}`}
                                 ></div>
-                                {/* Tooltip simples */}
-                                <div className="absolute bottom-full mb-2 opacity-0 group-hover:opacity-100 transition-opacity bg-black text-white text-xs px-2 py-1 rounded whitespace-nowrap z-10 pointer-events-none">
-                                    R$ {d.valor.toLocaleString('pt-BR')}
-                                </div>
+                                
+                                {/* Tooltip só aparece se tiver valor */}
+                                {d.valor > 0 && (
+                                    <div className="absolute bottom-full mb-2 opacity-0 group-hover:opacity-100 transition-opacity bg-black text-white text-xs px-2 py-1 rounded whitespace-nowrap z-10 pointer-events-none shadow-lg">
+                                        Dia {d.dia}: R$ {d.valor.toLocaleString('pt-BR')}
+                                    </div>
+                                )}
                             </div>
                             <span className="text-[10px] text-gray-400 font-bold">{d.dia}</span>
                         </div>
@@ -263,55 +236,17 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* --- ACESSO RÁPIDO & RECENTES --- */}
+        {/* Lista e Atalhos */}
         <div className="space-y-6">
-            
-            {/* Atalhos */}
             <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
                 <h3 className="font-bold text-gray-800 mb-4">Acesso Rápido</h3>
                 <div className="space-y-3">
-                    <Link href="/pdv" className="flex items-center justify-between p-3 bg-gray-50 hover:bg-blue-50 hover:border-blue-200 border border-transparent rounded-lg transition-all group">
-                        <div className="flex items-center gap-3">
-                            <div className="bg-blue-100 text-blue-600 p-2 rounded-full group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                                <ShoppingBag size={18} />
-                            </div>
-                            <div>
-                                <p className="font-bold text-sm text-gray-800">Novo Pedido</p>
-                                <p className="text-xs text-gray-500">Abrir PDV</p>
-                            </div>
-                        </div>
-                        <ArrowUpRight size={16} className="text-gray-400 group-hover:text-blue-600"/>
-                    </Link>
-
-                    <Link href="/contas-receber" className="flex items-center justify-between p-3 bg-gray-50 hover:bg-green-50 hover:border-green-200 border border-transparent rounded-lg transition-all group">
-                        <div className="flex items-center gap-3">
-                            <div className="bg-green-100 text-green-600 p-2 rounded-full group-hover:bg-green-600 group-hover:text-white transition-colors">
-                                <DollarSign size={18} />
-                            </div>
-                            <div>
-                                <p className="font-bold text-sm text-gray-800">Receber Conta</p>
-                                <p className="text-xs text-gray-500">Baixar parcelas</p>
-                            </div>
-                        </div>
-                        <ArrowUpRight size={16} className="text-gray-400 group-hover:text-green-600"/>
-                    </Link>
-
-                    <Link href="/clientes" className="flex items-center justify-between p-3 bg-gray-50 hover:bg-purple-50 hover:border-purple-200 border border-transparent rounded-lg transition-all group">
-                        <div className="flex items-center gap-3">
-                            <div className="bg-purple-100 text-purple-600 p-2 rounded-full group-hover:bg-purple-600 group-hover:text-white transition-colors">
-                                <Users size={18} />
-                            </div>
-                            <div>
-                                <p className="font-bold text-sm text-gray-800">Novo Cliente</p>
-                                <p className="text-xs text-gray-500">Cadastrar</p>
-                            </div>
-                        </div>
-                        <ArrowUpRight size={16} className="text-gray-400 group-hover:text-purple-600"/>
-                    </Link>
+                    <QuickLink href="/pdv" icon={<ShoppingBag size={18} />} title="Novo Pedido" sub="Abrir PDV" color="blue" />
+                    <QuickLink href="/contas-receber" icon={<DollarSign size={18} />} title="Receber Conta" sub="Baixar parcelas" color="green" />
+                    <QuickLink href="/clientes" icon={<Users size={18} />} title="Novo Cliente" sub="Cadastrar" color="purple" />
                 </div>
             </div>
 
-            {/* Últimas Vendas */}
             <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
                 <div className="flex justify-between items-center mb-4">
                     <h3 className="font-bold text-gray-800">Últimas Vendas</h3>
@@ -328,7 +263,7 @@ export default function DashboardPage() {
                                         {v.clientes?.nome || "Consumidor Final"}
                                     </p>
                                     <p className="text-[10px] text-gray-400">
-                                        {format(parseISO(v.created_at), "dd/MM HH:mm")}
+                                        {format(parseISO(v.data_venda), "dd/MM HH:mm")}
                                     </p>
                                 </div>
                                 <span className="text-sm font-bold text-green-600 bg-green-50 px-2 py-1 rounded">
@@ -339,9 +274,54 @@ export default function DashboardPage() {
                     )}
                 </div>
             </div>
-
         </div>
       </div>
     </div>
   );
+}
+
+function KPICard({ title, value, icon, sub, color }: any) {
+    const colors: any = { 
+        blue: "bg-blue-100 text-blue-600", green: "bg-green-100 text-green-600", 
+        red: "bg-red-100 text-red-600", gray: "bg-gray-100 text-gray-600" 
+    };
+    return (
+        <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all">
+           <div className="flex justify-between items-start">
+              <div>
+                 <p className="text-xs font-bold text-gray-500 uppercase">{title}</p>
+                 <h3 className={`text-2xl font-bold mt-2 ${color === 'red' ? 'text-red-600' : 'text-gray-900'}`}>{value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</h3>
+              </div>
+              <div className={`p-2 rounded-lg ${colors[color]}`}>{icon}</div>
+           </div>
+           <div className="mt-4 flex items-center text-xs text-gray-400">
+             <span className={`font-bold flex items-center gap-1 ${color === 'red' ? 'text-red-600' : 'text-' + color + '-600'}`}>
+               <TrendingUp size={12}/> Info
+             </span>
+             <span className="ml-2">{sub}</span>
+           </div>
+        </div>
+    )
+}
+
+function QuickLink({ href, icon, title, sub, color }: any) {
+    const colors: any = { 
+        blue: "bg-blue-100 text-blue-600 group-hover:bg-blue-600 group-hover:text-white", 
+        green: "bg-green-100 text-green-600 group-hover:bg-green-600 group-hover:text-white", 
+        purple: "bg-purple-100 text-purple-600 group-hover:bg-purple-600 group-hover:text-white" 
+    };
+    return (
+        <Link href={href} className={`flex items-center justify-between p-3 bg-gray-50 hover:bg-${color}-50 hover:border-${color}-200 border border-transparent rounded-lg transition-all group`}>
+            <div className="flex items-center gap-3">
+                <div className={`p-2 rounded-full transition-colors ${colors[color]}`}>
+                    {icon}
+                </div>
+                <div>
+                    <p className="font-bold text-sm text-gray-800">{title}</p>
+                    <p className="text-xs text-gray-500">{sub}</p>
+                </div>
+            </div>
+            <ArrowUpRight size={16} className={`text-gray-400 group-hover:text-${color}-600`}/>
+        </Link>
+    )
 }

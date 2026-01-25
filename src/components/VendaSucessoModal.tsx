@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { CheckCircle, Printer, X, ShoppingBag } from "lucide-react";
+import { CheckCircle, Printer, X, ShoppingBag, MessageCircle } from "lucide-react";
 import { createClient } from "@/src/lib/supabase";
 import { format } from "date-fns";
 
@@ -29,7 +29,7 @@ export function VendaSucessoModal({ isOpen, onClose, vendaId, formaPagamento }: 
   async function fetchVendaDetalhes() {
     const { data: vendaData } = await supabase
       .from("vendas")
-      .select("*, clientes(nome, cpf)")
+      .select("*, clientes(nome, cpf, telefone)")
       .eq("id", vendaId)
       .single();
     
@@ -42,205 +42,220 @@ export function VendaSucessoModal({ isOpen, onClose, vendaId, formaPagamento }: 
     setItens(itensData || []);
   }
 
-  // --- NOVA FUNÇÃO DE IMPRESSÃO (POPUP) ---
+  const formatCurrency = (val: number) => {
+    return val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  };
+
+  const formatarPagamento = (tipo: string) => {
+    const mapa: Record<string, string> = {
+        'pix': 'PIX', 
+        'dinheiro': 'DINHEIRO',
+        'credito': 'CARTAO CREDITO', 
+        'debito': 'CARTAO DEBITO', 
+        'crediario': 'CREDIARIO LOJA'
+    };
+    return mapa[tipo] || tipo?.toUpperCase() || 'OUTROS';
+  };
+
+  // --- IMPRESSÃO EM NOVA JANELA (POPUP) ---
   const handlePrint = () => {
     if (printRef.current) {
       const conteudo = printRef.current.innerHTML;
       
-      // Cria uma janela popup limpa
-      const win = window.open('', '', 'width=350,height=600');
+      // Configurações para centralizar a janela na tela
+      const width = 350;
+      const height = 600;
+      const left = (window.screen.width - width) / 2;
+      const top = (window.screen.height - height) / 2;
+
+      const win = window.open(
+        '', 
+        'Comprovante', 
+        `width=${width},height=${height},top=${top},left=${left},scrollbars=yes`
+      );
       
       if (win) {
         win.document.write(`
           <html>
             <head>
-              <title>Comprovante - NordicCred</title>
+              <title>Cupom #${vendaId?.slice(0,6)}</title>
               <style>
-                /* CSS ESPECÍFICO PARA IMPRESSORA TÉRMICA (80mm) */
-                @import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&display=swap');
-                
-                @media print {
-                  @page { 
-                    margin: 0; 
-                    size: 80mm auto; /* Força o tamanho do papel */
-                  }
-                  body { 
-                    margin: 0; 
-                    padding: 0; 
-                  }
+                @media print { 
+                    @page { margin: 0; size: 80mm auto; } 
+                    body { margin: 0; padding: 0; }
                 }
-
                 body {
-                  font-family: 'Roboto Mono', monospace;
-                  width: 80mm; /* Largura fixa da bobina */
+                  font-family: 'Courier New', Courier, monospace;
+                  font-size: 12px;
+                  width: 100%;
+                  max-width: 80mm;
                   margin: 0 auto;
-                  padding: 10px;
+                  padding: 5px;
                   color: #000;
-                  background: #fff;
+                  background-color: #fff;
+                  line-height: 1.2;
                 }
-
                 .text-center { text-align: center; }
                 .text-right { text-align: right; }
                 .text-left { text-align: left; }
                 .font-bold { font-weight: bold; }
-                
-                /* Tamanhos de fonte otimizados para térmica */
-                .text-lg { font-size: 16px; }
-                .text-md { font-size: 14px; }
-                .text-sm { font-size: 12px; }
-                .text-xs { font-size: 10px; }
-
-                .border-b { border-bottom: 1px dashed #000; }
-                .border-t { border-top: 1px dashed #000; }
-                
-                .mb-2 { margin-bottom: 5px; }
-                .mb-4 { margin-bottom: 10px; }
-                .mt-2 { margin-top: 5px; }
-                .pb-2 { padding-bottom: 5px; }
-                .pt-2 { padding-top: 5px; }
-
+                .divider { border-top: 1px dashed #000; margin: 5px 0; display: block; }
                 table { width: 100%; border-collapse: collapse; font-size: 11px; }
-                th, td { padding: 2px 0; }
+                th { text-align: left; border-bottom: 1px dashed #000; padding-bottom: 2px; }
+                td { vertical-align: top; padding-top: 2px; }
+                .col-qtd { width: 10%; text-align: center; }
+                .col-vl { width: 25%; text-align: right; }
+                .total-row { font-size: 14px; margin-top: 5px; }
+                .footer { font-size: 10px; margin-top: 10px; }
               </style>
             </head>
             <body>
               ${conteudo}
               <script>
-                // Auto-imprimir e fechar
-                setTimeout(() => {
-                  window.print();
-                  window.close();
+                // Espera carregar e imprime
+                setTimeout(() => { 
+                    window.print(); 
+                    // Opcional: window.close(); // Se quiser fechar automático
                 }, 500);
               </script>
             </body>
           </html>
         `);
         win.document.close();
+        win.focus();
       }
     }
   };
 
-  const formatarPagamento = (tipo: string) => {
-    const mapa: Record<string, string> = {
-        'pix': 'PIX',
-        'dinheiro': 'DINHEIRO',
-        'credito': 'CARTÃO CRÉDITO',
-        'debito': 'CARTÃO DÉBITO',
-        'crediario': 'CREDIÁRIO'
-    };
-    return mapa[tipo] || tipo?.toUpperCase() || 'OUTROS';
+  const handleWhatsApp = () => {
+    if (!venda) return;
+    const link = `https://wa.me/?text=${encodeURIComponent(`*COMPROVANTE DE VENDA*\nValor: ${formatCurrency(venda.valor_total)}\nVerifique sua compra!`)}`;
+    window.open(link, '_blank');
   };
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in zoom-in-95">
+      {/* Modal Principal - Overflow Visible para ícone flutuante */}
+      <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl flex flex-col max-h-[90vh] relative overflow-visible">
         
-        {/* Header Visual */}
-        <div className="bg-green-600 p-6 text-center text-white shrink-0">
-          <div className="bg-white/20 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 backdrop-blur-md">
-            <CheckCircle size={40} className="text-white" />
-          </div>
-          <h2 className="text-2xl font-bold">Venda Realizada!</h2>
-          <p className="text-green-100 text-sm">O pedido foi registrado com sucesso.</p>
+        {/* Ícone de Sucesso Flutuante */}
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 -mt-10 z-20">
+             <div className="bg-green-100 p-4 rounded-full shadow-lg ring-4 ring-white">
+                <CheckCircle size={48} className="text-green-600" />
+             </div>
         </div>
 
-        {/* Corpo do Recibo (Preview na tela) */}
-        <div className="p-6 overflow-y-auto bg-gray-50 flex-1">
-            
-            {/* --- CONTEÚDO OCULTO QUE VAI PARA A IMPRESSORA --- */}
-            <div className="hidden">
-                <div ref={printRef}>
-                    {/* Cabeçalho */}
-                    <div className="text-center mb-4 border-b pb-2">
-                        <div className="font-bold text-lg">NORDICCRED</div>
-                        <div className="text-xs">Rua da Tecnologia, 123</div>
-                        <div className="text-xs">CNPJ: 00.000.000/0001-00</div>
-                        <div className="text-xs mt-2">{format(new Date(), "dd/MM/yyyy HH:mm")}</div>
-                        <div className="text-xs">Venda: #{vendaId?.slice(0,8).toUpperCase()}</div>
-                    </div>
-                    
-                    {/* Cliente */}
-                    <div className="mb-4 border-b pb-2 text-xs">
-                        <div><span className="font-bold">CONSUMIDOR:</span> {venda?.clientes?.nome || "Consumidor Final"}</div>
-                        <div>CPF: {venda?.clientes?.cpf || "---"}</div>
-                    </div>
+        {/* Header do Modal (Visualização na Tela) */}
+        <div className="mt-14 text-center px-6">
+          <h2 className="text-2xl font-bold text-gray-900">Venda Finalizada!</h2>
+          <p className="text-gray-500 text-sm mt-1">Tudo certo. O que deseja fazer agora?</p>
+        </div>
 
-                    {/* Itens */}
-                    <table className="mb-4">
-                        <thead>
-                            <tr className="border-b">
-                                <th className="text-left">ITEM</th>
-                                <th className="text-right" style={{ width: '30px' }}>QTD</th>
-                                <th className="text-right" style={{ width: '60px' }}>TOTAL</th>
+        {/* Resumo Visual na Tela */}
+        <div className="p-6 bg-gray-50 mt-6 mx-4 rounded-xl border border-gray-200">
+            <div className="flex justify-between items-center text-sm mb-2">
+                <span className="text-gray-500">Total Pago</span>
+                <span className="font-bold text-lg text-green-700">{venda ? formatCurrency(venda.valor_total) : 'R$ 0,00'}</span>
+            </div>
+            <div className="flex justify-between items-center text-sm">
+                <span className="text-gray-500">Cliente</span>
+                <span className="font-medium text-gray-900 truncate max-w-[150px]">{venda?.clientes?.nome || "Consumidor Final"}</span>
+            </div>
+        </div>
+
+        {/* --- CONTEÚDO OCULTO --- 
+            Isso aqui NÃO aparece no modal, serve apenas de template 
+            para o Javascript copiar para a nova janela de impressão.
+        */}
+        <div style={{ display: 'none' }}>
+            <div ref={printRef}>
+                <div className="text-center">
+                    <div className="font-bold text-lg">NORDICCRED</div>
+                    <div>Rua da Tecnologia, 123</div>
+                    <div>CNPJ: 00.000.000/0001-00</div>
+                    <div className="divider"></div>
+                    <div className="font-bold">COMPROVANTE NAO FISCAL</div>
+                    <div className="divider"></div>
+                </div>
+
+                <div style={{ fontSize: '11px' }}>
+                    <div>DATA: {format(new Date(), "dd/MM/yyyy HH:mm:ss")}</div>
+                    <div>VENDA: <b>#{vendaId?.slice(0,6).toUpperCase()}</b></div>
+                    <div>CLI: {venda?.clientes?.nome?.slice(0,25) || "CONSUMIDOR FINAL"}</div>
+                    {venda?.clientes?.cpf && <div>CPF: {venda.clientes.cpf}</div>}
+                </div>
+                
+                <div className="divider"></div>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th>DESC</th>
+                            <th className="col-qtd">QTD</th>
+                            <th className="col-vl">TOTAL</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {itens.map((item, idx) => (
+                            <tr key={idx}>
+                                <td>{item.produto_nome?.toUpperCase().slice(0, 18)}</td>
+                                <td className="text-center">{item.quantidade}</td>
+                                <td className="text-right">{formatCurrency(item.valor_unitario * item.quantidade).replace('R$', '').trim()}</td>
                             </tr>
-                        </thead>
-                        <tbody>
-                            {itens.map((item) => (
-                                <tr key={item.id}>
-                                    <td className="text-left">{item.produto_nome?.slice(0, 20)}</td>
-                                    <td className="text-right">{item.quantidade}</td>
-                                    <td className="text-right">{ (item.valor_unitario * item.quantidade).toFixed(2) }</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                        ))}
+                    </tbody>
+                </table>
 
-                    {/* Totais */}
-                    <div className="text-right border-t pt-2">
-                        <div className="font-bold text-lg">TOTAL: R$ {venda?.valor_total?.toFixed(2)}</div>
-                        <div className="text-xs mt-1">Forma: {formatarPagamento(formaPagamento)}</div>
-                    </div>
+                <div className="divider"></div>
 
-                    {/* Rodapé */}
-                    <div className="text-center mt-6 text-xs">
-                        <div>*** NÃO É DOCUMENTO FISCAL ***</div>
-                        <div>Controle Interno</div>
-                        <br/>
-                        <div>Volte Sempre!</div>
-                        <div>www.nordictech.com.br</div>
-                    </div>
+                <div className="total-row text-right">
+                    <div className="font-bold">TOTAL: {venda ? formatCurrency(venda.valor_total) : '0,00'}</div>
                 </div>
+                
+                <div style={{ fontSize: '11px', marginTop: '5px' }}>
+                    <div className="text-right">Forma: {formatarPagamento(formaPagamento)}</div>
+                    {venda?.desconto > 0 && (
+                        <div className="text-right">Desconto: -{formatCurrency(venda.desconto)}</div>
+                    )}
+                </div>
+
+                <div className="divider"></div>
+
+                <div className="text-center footer">
+                    <div className="font-bold">OBRIGADO PELA PREFERENCIA!</div>
+                    <div style={{ marginTop: '5px' }}>Sistema: NordicTech</div>
+                    <div>www.nordictech.com.br</div>
+                </div>
+                <br /><div className="text-center">.</div> 
             </div>
-
-            {/* --- VISUALIZAÇÃO NA TELA (BONITA) --- */}
-            <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
-                <div className="flex justify-between items-center border-b border-gray-100 pb-3 mb-3">
-                    <span className="text-gray-500 text-xs uppercase font-bold">Total Pago</span>
-                    <span className="text-xl font-bold text-gray-900">
-                        R$ {venda?.valor_total?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                    </span>
-                </div>
-                <div className="space-y-2">
-                    <div className="flex justify-between text-sm">
-                        <span className="text-gray-500">Pagamento via</span>
-                        <span className="font-medium text-gray-900">{formatarPagamento(formaPagamento)}</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                        <span className="text-gray-500">Itens</span>
-                        <span className="font-medium text-gray-900">{itens.length} produtos</span>
-                    </div>
-                </div>
-            </div>
-
         </div>
 
-        {/* Footer */}
-        <div className="p-4 bg-white border-t border-gray-100 flex gap-3">
-          <button 
-            onClick={onClose}
-            className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-medium transition-colors"
-          >
-            Fechar
-          </button>
-          <button 
-            onClick={handlePrint}
-            className="flex-1 py-3 bg-black hover:bg-gray-800 text-white rounded-xl font-bold shadow-lg flex items-center justify-center gap-2 transition-transform active:scale-95"
-          >
-            <Printer size={20} />
-            Imprimir (80mm)
-          </button>
+        {/* Botões de Ação */}
+        <div className="p-6 mt-auto space-y-3">
+            <button 
+                onClick={handleWhatsApp}
+                className="w-full py-3 bg-green-500 hover:bg-green-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-green-100 transition-transform active:scale-95"
+            >
+                <MessageCircle size={20} />
+                Enviar no WhatsApp
+            </button>
+
+            <div className="flex gap-3">
+                <button 
+                    onClick={handlePrint}
+                    className="flex-1 py-3 bg-gray-900 hover:bg-black text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors shadow-md"
+                >
+                    <Printer size={20} /> Imprimir
+                </button>
+                <button 
+                    onClick={onClose}
+                    className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold transition-colors"
+                >
+                    Nova Venda
+                </button>
+            </div>
         </div>
 
       </div>

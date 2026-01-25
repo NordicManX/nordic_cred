@@ -10,6 +10,7 @@ import { ClientDetailsModal } from "@/src/components/ClientDetailsModal";
 import { ConfirmModal } from "@/src/components/ConfirmModal";
 import { Pagination } from "@/src/components/Pagination";
 import { toast } from "sonner";
+import { GamificationBadge } from "@/src/components/GamificationBadge"; // Componente da Gamificação
 
 export default function ClientesPage() {
   const supabase = createClient();
@@ -33,7 +34,7 @@ export default function ClientesPage() {
   const [pagina, setPagina] = useState(1);
   const [totalItems, setTotalItems] = useState(0);
   
-  // ATUALIZADO: Voltamos para 10 itens (pois agora vamos rolar a tela)
+  // Voltamos para 10 itens (pois agora vamos rolar a tela)
   const ITENS_POR_PAGINA = 10; 
 
   useEffect(() => {
@@ -161,7 +162,7 @@ export default function ClientesPage() {
                 <th className="px-6 py-4 font-medium whitespace-nowrap">Cliente</th>
                 <th className="px-6 py-4 font-medium whitespace-nowrap">CPF</th>
                 <th className="px-6 py-4 font-medium whitespace-nowrap">Status</th>
-                <th className="px-6 py-4 font-medium whitespace-nowrap">Pontos</th>
+                <th className="px-6 py-4 font-medium whitespace-nowrap">Nível (Pontos)</th>
                 <th className="px-6 py-4 font-medium text-right whitespace-nowrap">Ações</th>
               </tr>
             </thead>
@@ -185,7 +186,12 @@ export default function ClientesPage() {
                         <span className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-bold border border-green-200">Em dia</span>
                       )}
                     </td>
-                    <td className="px-6 py-4 font-bold text-blue-600">{cliente.pontos_acumulados || 0}</td>
+                    
+                    {/* COLUNA DE PONTOS ATUALIZADA */}
+                    <td className="px-6 py-4">
+                      <GamificationBadge pontos={cliente.pontos_acumulados || 0} />
+                    </td>
+
                     <td className="px-6 py-4 text-right flex items-center justify-end gap-2">
                       <button onClick={() => handleVisualizar(cliente)} className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="Ver Ficha">
                         <FileText size={18} />
