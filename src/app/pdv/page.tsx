@@ -1,16 +1,26 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Search, ShoppingCart, Trash2, User, Loader2, Package, CheckCircle } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { Search, ShoppingCart, Trash2, User, Loader2, Package, CheckCircle, X, CreditCard, Plus, LayoutGrid, LogOut } from "lucide-react";
 import { toast } from "sonner";
 import { Produto, ItemCarrinho, Cliente } from "@/src/types";
 import { createClient } from "@/src/lib/supabase";
 import { VendaSucessoModal } from "@/src/components/VendaSucessoModal";
 import { ConfirmModal } from "@/src/components/ConfirmModal"; 
 import { PaymentFlowModal } from "@/src/components/PaymentFlowModal"; 
+import { useRouter } from "next/navigation";
+
+// --- ESTILOS DE SCROLLBAR FININHA ---
+const customStyles = `
+  .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+  .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+  .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
+`;
 
 export default function PDVPage() {
   const supabase = createClient();
+  const router = useRouter();
   
   // --- ESTADOS DE DADOS ---
   const [produtosDb, setProdutosDb] = useState<Produto[]>([]);
@@ -36,20 +46,24 @@ export default function PDVPage() {
   const [ultimaVendaId, setUltimaVendaId] = useState<string | null>(null);
   const [formaPagamentoReal, setFormaPagamentoReal] = useState<string>(""); 
 
-  // Cliente Padrão (Cache)
-  const [consumidorFinal, setConsumidorFinal] = useState<Cliente | null>(null);
+  // Refs
+  const inputBuscaRef = useRef<HTMLInputElement>(null);
 
-  // 1. Carregar Consumidor Final e Produtos
+  // 1. VERIFICAR AUTENTICAÇÃO AO CARREGAR
+  useEffect(() => {
+    async function checkAuth() {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+            toast.error("Sessão expirada. Faça login novamente.");
+            // Opcional: router.push('/login');
+        }
+    }
+    checkAuth();
+  }, []);
+
+  // 2. Carregar Produtos
   useEffect(() => {
     async function loadInitialData() {
-      const { data: clienteData } = await supabase
-        .from("clientes")
-        .select("*")
-        .or('cpf.eq.000.000.000-00,nome.eq.Consumidor Final')
-        .single();
-      
-      if (clienteData) setConsumidorFinal(clienteData);
-
       const { data: produtosData } = await supabase
         .from("produtos")
         .select("*")
@@ -61,7 +75,7 @@ export default function PDVPage() {
     loadInitialData();
   }, []);
 
-  // 2. Busca de Clientes
+  // 3. Busca de Clientes
   useEffect(() => {
     async function searchClientes() {
       if (buscaCliente.length < 2) {
@@ -71,7 +85,7 @@ export default function PDVPage() {
       const { data } = await supabase
         .from("clientes")
         .select("*")
-        .ilike("nome", `%${buscaCliente}%`)
+        .or(`nome.ilike.%${buscaCliente}%,cpf.ilike.%${buscaCliente}%`)
         .limit(5);
       
       setClientes(data || []);
@@ -90,7 +104,7 @@ export default function PDVPage() {
     }
     setClienteSelecionado(cliente);
     setMostrarListaClientes(false);
-    setBuscaCliente("");
+    setBuscaCliente(""); 
     toast.success(`Cliente ${cliente.nome} selecionado.`);
   };
 
@@ -106,6 +120,7 @@ export default function PDVPage() {
     });
     toast.success(`${produto.nome} adicionado!`);
     setBuscaProduto("");
+    inputBuscaRef.current?.focus();
   };
 
   const removerDoCarrinho = (id: string) => {
@@ -115,46 +130,45 @@ export default function PDVPage() {
   // --- PROCESSAMENTO DA VENDA ---
   const processarVenda = async (dadosPagamento: any) => {
     setLoadingVenda(true);
-    const clienteFinal = clienteSelecionado || consumidorFinal;
-
-    if (!clienteFinal) {
-        toast.error("Erro: Cliente não identificado.");
-        setLoadingVenda(false);
-        return;
-    }
+    
+    // Se tiver cliente selecionado usa ele, senão manda NULL (banco entende como Consumidor Final)
+    const clienteIdFinal = clienteSelecionado?.id || null;
 
     try {
-        // --- 1. GAMIFICAÇÃO: RESGATAR PONTOS (Se houver) ---
-        // Se o cliente usou pontos, descontamos do saldo dele ANTES de salvar a venda.
-        if (dadosPagamento.detalhes.pontos_usados > 0 && clienteSelecionado?.id) {
-           const { error: erroResgate } = await supabase
-             .rpc('resgatar_pontos', { 
-                p_cliente_id: clienteSelecionado.id, 
-                p_pontos: dadosPagamento.detalhes.pontos_usados 
-             });
-
-           if (erroResgate) {
-              console.error("Erro ao descontar pontos:", erroResgate);
-              toast.error("Erro ao usar pontos. Venda cancelada.");
-              setLoadingVenda(false);
-              return;
-           }
+        // --- 0. GARANTIA DE AUTENTICAÇÃO ---
+        // Tenta pegar o usuário. Se falhar, tenta pegar a sessão.
+        let userId = (await supabase.auth.getUser()).data.user?.id;
+        
+        if (!userId) {
+            const { data: { session } } = await supabase.auth.getSession();
+            userId = session?.user?.id;
         }
 
-        // --- 2. CRIAR VENDA ---
-        // IMPORTANTE: Salvamos o 'desconto' para que o gatilho calcule os NOVOS pontos corretamente
-        // (Pontos Ganhos = Valor Total - Desconto)
+        if (!userId) {
+            toast.error("Erro de Autenticação: Sessão expirada.");
+            toast.info("Por favor, recarregue a página ou faça login novamente.");
+            setLoadingVenda(false);
+            return;
+        }
+
+        // --- 1. CRIAR A VENDA ---
         const { data: venda, error: errVenda } = await supabase.from("vendas").insert({
-            cliente_id: clienteFinal.id,
+            user_id: userId, // Agora usamos o ID garantido
+            cliente_id: clienteIdFinal,
             valor_total: totalCarrinho,
-            desconto: dadosPagamento.detalhes.desconto_aplicado || 0, // <--- CAMPO IMPORTANTE
-            forma_pagamento: dadosPagamento.forma_pagamento, 
-            // pontos_gerados: O gatilho do banco calcula isso agora automaticamente!
+            desconto: dadosPagamento.detalhes.desconto_aplicado || 0,
+            forma_pagamento: dadosPagamento.forma_pagamento,
+            status: "concluido", 
+            data_venda: new Date().toISOString()
         }).select().single();
 
-        if (errVenda) throw errVenda;
+        if (errVenda) {
+            console.error("Erro Supabase Venda:", errVenda);
+            throw new Error(`Erro ao criar venda: ${errVenda.message}`);
+        }
+        if (!venda) throw new Error("Erro ao gerar ID da venda.");
 
-        // --- 3. INSERIR ITENS ---
+        // --- 2. INSERIR ITENS ---
         const itens = carrinho.map(item => ({
             venda_id: venda.id,
             produto_id: item.id,
@@ -164,62 +178,105 @@ export default function PDVPage() {
         }));
         
         const { error: errItens } = await supabase.from("itens_venda").insert(itens);
-        
-        if (errItens) {
-            await supabase.from("vendas").delete().eq("id", venda.id); // Rollback manual simples
-            throw new Error(`Erro ao salvar itens: ${errItens.message}`);
+        if (errItens) throw errItens;
+
+        // --- 3. ATUALIZAR ESTOQUE ---
+        for (const item of carrinho) {
+            await supabase.rpc('decrementar_estoque', { 
+                p_produto_id: item.id, 
+                p_quantidade: item.quantidade 
+            });
         }
 
-        // --- 4. GERAR PARCELAS ---
-        const parcelas = [];
-        const numParcelas = dadosPagamento.detalhes.parcelas;
-        
-        // O valor da parcela deve considerar o valor JÁ DESCONTADO
-        const valorFinalVenda = totalCarrinho - (dadosPagamento.detalhes.desconto_aplicado || 0);
-        const valorParcela = valorFinalVenda / numParcelas;
-
-        for (let i = 1; i <= numParcelas; i++) {
-            let vencimento = new Date();
-            let status = 'pago'; 
-            let dataPagamento = new Date().toISOString();
-
+        // --- 4. ATUALIZAR CLIENTE (Limite e Pontos) ---
+        if (clienteIdFinal && clienteSelecionado) {
+            
+            // A. Atualizar Limite (Se foi Crediário)
             if (dadosPagamento.forma_pagamento === 'crediario') {
-                status = 'pendente';
-                dataPagamento = null as any;
+                const valorFinanciado = dadosPagamento.detalhes.valor_financiado;
                 
-                if (dadosPagamento.detalhes.primeiro_vencimento) {
-                    const dataBase = new Date(dadosPagamento.detalhes.primeiro_vencimento);
-                    vencimento = new Date(dataBase); 
-                    vencimento.setMonth(vencimento.getMonth() + (i - 1));
-                } else {
-                    vencimento.setDate(vencimento.getDate() + (i * 30));
+                // Busca dados frescos
+                const { data: cliAtual } = await supabase
+                    .from('clientes')
+                    .select('limite, limite_credito')
+                    .eq('id', clienteIdFinal)
+                    .single();
+
+                if (cliAtual) {
+                    const limiteAtual = cliAtual.limite_credito ?? cliAtual.limite ?? 0;
+                    const novoLimite = limiteAtual - valorFinanciado;
+
+                    await supabase.from('clientes')
+                        .update({ 
+                            limite: novoLimite, 
+                            limite_credito: novoLimite 
+                        })
+                        .eq('id', clienteIdFinal);
                 }
             }
 
-            parcelas.push({
-                venda_id: venda.id,
-                cliente_id: clienteFinal.id,
-                numero_parcela: i,
-                valor: valorParcela,
-                data_vencimento: vencimento.toISOString(),
-                data_pagamento: dataPagamento,
-                status: status
-            });
-        }
-        
-        const { error: errParcelas } = await supabase.from("parcelas").insert(parcelas);
-        if (errParcelas) throw errParcelas;
+            // B. Pontos Ganhos
+            if (dadosPagamento.detalhes.pontos_ganhos_estimados > 0) {
+                await supabase.rpc('incrementar_pontos', {
+                    p_cliente_id: clienteIdFinal,
+                    p_pontos: dadosPagamento.detalhes.pontos_ganhos_estimados
+                });
+            }
 
-        // --- 5. ATUALIZAR ESTADO ---
+            // C. Pontos Usados (Desconto)
+            if (dadosPagamento.detalhes.pontos_usados > 0) {
+                const { error: errRPC } = await supabase.rpc('decrementar_pontos', {
+                    p_cliente_id: clienteIdFinal,
+                    p_pontos: dadosPagamento.detalhes.pontos_usados
+                });
+                
+                if (errRPC) {
+                    const saldoAtual = clienteSelecionado.pontos_acumulados || 0;
+                    await supabase.from('clientes')
+                        .update({ pontos_acumulados: Math.max(0, saldoAtual - dadosPagamento.detalhes.pontos_usados) })
+                        .eq('id', clienteIdFinal);
+                }
+            }
+        }
+
+        // --- 5. GERAR PARCELAS (Se for crediário) ---
+        if (dadosPagamento.forma_pagamento === 'crediario') {
+            const numParcelas = dadosPagamento.detalhes.parcelas;
+            const valorFinanciado = dadosPagamento.detalhes.valor_financiado;
+            const valorParcela = valorFinanciado / numParcelas;
+            let dataBase = new Date(dadosPagamento.detalhes.primeiro_vencimento || new Date());
+
+            const parcelas = [];
+            for (let i = 0; i < numParcelas; i++) {
+                const dataP = new Date(dataBase);
+                if (i > 0) dataP.setMonth(dataP.getMonth() + i);
+
+                parcelas.push({
+                    venda_id: venda.id,
+                    cliente_id: clienteIdFinal,
+                    numero_parcela: i + 1,
+                    valor: valorParcela,
+                    data_vencimento: dataP.toISOString(),
+                    status: 'pendente'
+                });
+            }
+            await supabase.from("parcelas").insert(parcelas);
+        }
+
+        // --- SUCESSO ---
+        toast.success("Venda realizada com sucesso!");
+        
         setUltimaVendaId(venda.id);
         setFormaPagamentoReal(dadosPagamento.forma_pagamento);
         
+        // Limpa PDV
         setCarrinho([]);
         setClienteSelecionado(null);
         setBuscaCliente("");
+        
+        // Fecha Pagamento e Abre Sucesso
         setIsPaymentOpen(false);
         setSucessoOpen(true);
-        toast.success("Venda realizada com sucesso!");
 
     } catch (err: any) {
         console.error(err);
@@ -233,116 +290,132 @@ export default function PDVPage() {
   const produtosFiltrados = produtosDb.filter(p => p.nome.toLowerCase().includes(buscaProduto.toLowerCase()));
 
   return (
-    <div className="flex flex-col lg:flex-row h-auto lg:h-[calc(100vh-4rem)] gap-6 pb-20 lg:pb-0">
+    <>
+    <style>{customStyles}</style>
+    {/* CONTAINER PRINCIPAL */}
+    <div className="flex flex-col md:flex-row h-[calc(100vh-80px)] gap-4 p-4 animate-in fade-in overflow-hidden">
       
       {/* LADO ESQUERDO: Catálogo */}
-      <div className="flex-1 flex flex-col gap-4">
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200">
+      <div className="flex-1 flex flex-col gap-4 min-w-0 h-full">
+        {/* Busca */}
+        <div className="bg-white p-3 rounded-xl shadow-sm border border-gray-200 shrink-0">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
             <input 
+              ref={inputBuscaRef}
               type="text" 
               placeholder="Buscar produto (F1)..." 
               value={buscaProduto}
               onChange={(e) => setBuscaProduto(e.target.value)}
-              className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 text-gray-900"
+              className="w-full pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 text-gray-900"
               autoFocus
             />
           </div>
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 overflow-y-auto pr-2 pb-20 content-start">
+        {/* Grid Produtos */}
+        <div className="flex-1 bg-white rounded-xl shadow-sm border border-gray-200 overflow-y-auto p-4 custom-scrollbar">
           {loadingProdutos ? (
-            <div className="col-span-full py-12 flex flex-col items-center text-gray-400 gap-2">
+            <div className="h-full flex flex-col items-center justify-center text-gray-400 gap-2">
               <Loader2 className="animate-spin" size={32} />
-              <p>Carregando catálogo...</p>
+              <p>Carregando...</p>
             </div>
           ) : produtosFiltrados.length === 0 ? (
-            <div className="col-span-full py-12 flex flex-col items-center text-gray-400 gap-2">
-              <Package size={48} className="opacity-20" />
-              <p>Nenhum produto encontrado.</p>
+            <div className="h-full flex flex-col items-center justify-center text-gray-400 gap-2 opacity-50">
+              <LayoutGrid size={48} />
+              <p>Nada encontrado.</p>
             </div>
           ) : (
-            produtosFiltrados.map((produto) => (
-              <button
-                key={produto.id}
-                onClick={() => adicionarAoCarrinho(produto)}
-                className="bg-white p-4 rounded-xl border border-gray-200 hover:border-blue-500 hover:shadow-md transition-all text-left group flex flex-col justify-between h-40"
-              >
-                <div>
-                  <div className="flex justify-between items-start">
-                    <span className="text-[10px] font-bold text-gray-400 mb-1 block uppercase">COD: {produto.id.slice(0,4)}</span>
-                    {(produto.estoque !== undefined) && (
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
-                        produto.estoque > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                      }`}>
-                        {produto.estoque} un
-                      </span>
-                    )}
+            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
+              {produtosFiltrados.map((produto) => (
+                <div
+                  key={produto.id}
+                  onClick={() => adicionarAoCarrinho(produto)}
+                  className="p-3 border rounded-xl hover:border-blue-500 hover:bg-blue-50 cursor-pointer transition-all group flex flex-col justify-between h-36 bg-white shadow-sm hover:shadow-md"
+                >
+                  <div>
+                    <div className="flex justify-between items-start mb-1">
+                      <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">COD: {produto.codigo_barras || produto.id.slice(0,4)}</span>
+                      {(produto.estoque !== undefined) && (
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
+                          produto.estoque > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                        }`}>
+                          {produto.estoque} un
+                        </span>
+                      )}
+                    </div>
+                    <h3 className="font-semibold text-gray-800 text-sm leading-tight group-hover:text-blue-600 line-clamp-2" title={produto.nome}>
+                      {produto.nome}
+                    </h3>
                   </div>
-                  <h3 className="font-semibold text-gray-800 leading-tight group-hover:text-blue-600 transition-colors line-clamp-2">
-                    {produto.nome}
-                  </h3>
+                  <div className="flex justify-between items-end mt-1">
+                    <span className="text-base font-bold text-gray-900">
+                      {produto.preco.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                    </span>
+                    <button className="bg-gray-900 text-white p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity transform active:scale-90">
+                      <Plus size={14} />
+                    </button>
+                  </div>
                 </div>
-                <div className="mt-2">
-                  <span className="text-lg font-bold text-green-700">
-                    {produto.preco.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                  </span>
-                </div>
-              </button>
-            ))
+              ))}
+            </div>
           )}
         </div>
       </div>
 
       {/* LADO DIREITO: Carrinho */}
-      <div className="w-full md:w-[400px] bg-white rounded-xl shadow-lg border border-gray-200 flex flex-col h-full overflow-hidden">
-        <div className="p-4 bg-gray-50 border-b border-gray-200 space-y-3">
-          <h2 className="font-bold text-gray-800 flex items-center gap-2">
+      <div className="w-full md:w-[380px] lg:w-[420px] bg-white rounded-xl shadow-xl border border-gray-200 flex flex-col h-full overflow-hidden shrink-0">
+        
+        {/* Header Carrinho */}
+        <div className="p-4 bg-gray-50 border-b border-gray-200 space-y-3 shrink-0">
+          <h2 className="font-bold text-gray-800 flex items-center gap-2 text-lg">
             <ShoppingCart size={20} className="text-blue-600" />
             Carrinho
           </h2>
+          
+          {/* Seleção de Cliente */}
           <div className="relative">
             {clienteSelecionado ? (
-              <div className="flex items-center justify-between bg-blue-50 border border-blue-200 p-3 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <div className="bg-blue-200 p-2 rounded-full text-blue-700">
-                    <User size={16} />
+              <div className="flex items-center justify-between bg-blue-100 border border-blue-200 p-2.5 rounded-lg animate-in slide-in-from-top-2">
+                <div className="flex items-center gap-3 overflow-hidden">
+                  <div className="bg-blue-600 w-8 h-8 flex items-center justify-center rounded-full text-white shrink-0 font-bold text-xs">
+                    {clienteSelecionado.nome.charAt(0)}
                   </div>
-                  <div>
-                    <p className="text-sm font-bold text-blue-900">{clienteSelecionado.nome}</p>
-                    <p className="text-xs text-blue-600">Limite: R$ {clienteSelecionado.limite_credito}</p>
+                  <div className="truncate">
+                    <p className="text-sm font-bold text-blue-900 truncate">{clienteSelecionado.nome}</p>
+                    <p className="text-[10px] text-blue-700 font-medium">Limite: R$ {(clienteSelecionado.limite_credito || 0).toLocaleString('pt-BR', {minimumFractionDigits: 2})}</p>
                   </div>
                 </div>
                 <button 
                   onClick={() => { setClienteSelecionado(null); setBuscaCliente(""); }}
-                  className="text-blue-400 hover:text-red-500 transition-colors"
+                  className="text-blue-500 hover:text-red-500 transition-colors p-1"
                 >
-                  <Trash2 size={16} />
+                  <X size={16} />
                 </button>
               </div>
             ) : (
               <div className="relative">
+                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"><User size={16} /></div>
                 <input 
                   type="text"
-                  placeholder="Cliente (Vazio = Consumidor Final)"
+                  placeholder="Identificar Cliente..."
                   value={buscaCliente}
                   onChange={(e) => setBuscaCliente(e.target.value)}
-                  className="w-full pl-3 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 transition-all"
                 />
                 {mostrarListaClientes && clientes.length > 0 && (
-                  <div className="absolute top-full left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-xl mt-1 z-50 max-h-48 overflow-y-auto">
+                  <div className="absolute top-full left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-xl mt-1 z-50 max-h-48 overflow-y-auto custom-scrollbar">
                     {clientes.map(cliente => (
                       <button
                         key={cliente.id}
                         onClick={() => selecionarCliente(cliente)}
                         className={`w-full text-left px-4 py-2 hover:bg-gray-50 text-sm border-b border-gray-50 last:border-0 flex justify-between items-center ${cliente.status === 'bloqueado' ? 'bg-red-50 hover:bg-red-100' : ''}`}
                       >
-                        <div>
-                            <p className="font-medium text-gray-800">{cliente.nome}</p>
-                            <p className="text-xs text-gray-500">CPF: {cliente.cpf}</p>
+                        <div className="truncate pr-2">
+                            <p className="font-medium text-gray-800 truncate">{cliente.nome}</p>
+                            <p className="text-xs text-gray-500">{cliente.cpf}</p>
                         </div>
-                        {cliente.status === 'bloqueado' && <span className="text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded font-bold border border-red-200">BLOQUEADO</span>}
+                        {cliente.status === 'bloqueado' && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold border border-red-200 shrink-0">BLOQUEADO</span>}
                       </button>
                     ))}
                   </div>
@@ -352,26 +425,27 @@ export default function PDVPage() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        {/* Lista Itens (Scroll só aqui) */}
+        <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar bg-gray-50/50">
           {carrinho.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-gray-400 space-y-2 opacity-50">
-              <ShoppingCart size={48} />
-              <p>Carrinho vazio</p>
+            <div className="h-full flex flex-col items-center justify-center text-gray-300 space-y-2 select-none">
+              <ShoppingCart size={40} />
+              <p className="text-sm font-medium">Carrinho vazio</p>
             </div>
           ) : (
             carrinho.map((item) => (
-              <div key={item.id} className="flex justify-between items-center bg-gray-50 p-3 rounded-lg">
-                <div>
-                  <p className="text-sm font-medium text-gray-800 line-clamp-1">{item.nome}</p>
-                  <p className="text-xs text-gray-500">
-                    {item.quantidade}x {item.preco.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+              <div key={item.id} className="flex justify-between items-center bg-white border border-gray-200 p-3 rounded-lg shadow-sm hover:shadow-md transition-shadow group">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-gray-800 line-clamp-1" title={item.nome}>{item.nome}</p>
+                  <p className="text-xs text-gray-500 font-mono mt-0.5">
+                    {item.quantidade} x {item.preco.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                   </p>
                 </div>
-                <div className="flex items-center gap-3">
-                  <span className="font-bold text-gray-700 text-sm">
+                <div className="flex items-center gap-3 pl-2 shrink-0">
+                  <span className="font-bold text-gray-900 text-sm">
                     {(item.preco * item.quantidade).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                   </span>
-                  <button onClick={() => removerDoCarrinho(item.id)} className="text-gray-400 hover:text-red-500 transition-colors">
+                  <button onClick={() => removerDoCarrinho(item.id)} className="text-gray-300 hover:text-red-500 transition-colors p-1 rounded-md hover:bg-red-50">
                     <Trash2 size={16} />
                   </button>
                 </div>
@@ -380,10 +454,11 @@ export default function PDVPage() {
           )}
         </div>
 
-        <div className="p-6 bg-gray-50 border-t border-gray-200">
+        {/* Footer Totais */}
+        <div className="p-5 bg-white border-t border-gray-200 shrink-0 z-10 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
           <div className="flex justify-between items-end mb-4">
-            <span className="text-gray-500 font-medium">Total a Pagar</span>
-            <span className="text-3xl font-bold text-gray-900">
+            <span className="text-gray-500 font-medium text-sm">Total a Pagar</span>
+            <span className="text-3xl font-bold text-gray-900 tracking-tight">
               {totalCarrinho.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
             </span>
           </div>
@@ -391,15 +466,16 @@ export default function PDVPage() {
           <button 
             onClick={() => setIsPaymentOpen(true)}
             disabled={carrinho.length === 0}
-            className="w-full py-4 bg-green-600 hover:bg-green-700 text-white rounded-xl font-bold text-lg shadow-lg shadow-green-200 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all transform hover:scale-[1.02]"
+            className="w-full py-3.5 bg-gray-900 hover:bg-black text-white rounded-xl font-bold text-lg shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 active:scale-[0.98]"
           >
-            {loadingVenda ? <Loader2 className="animate-spin" /> : <CheckCircle size={24} />}
+            {loadingVenda ? <Loader2 className="animate-spin" size={20}/> : <CreditCard size={20} />}
             Finalizar Venda
           </button>
-          {!clienteSelecionado && <p className="text-xs text-center text-gray-400 mt-2">Venda s/ cliente será registrada como Consumidor Final.</p>}
+          {!clienteSelecionado && <p className="text-[10px] text-center text-gray-400 mt-2 font-medium">Venda sem cliente = Consumidor Final</p>}
         </div>
       </div>
 
+      {/* MODAIS */}
       <PaymentFlowModal 
         isOpen={isPaymentOpen}
         onClose={() => setIsPaymentOpen(false)}
@@ -421,11 +497,12 @@ export default function PDVPage() {
         onClose={() => setModalBloqueioOpen(false)}
         onConfirm={() => setModalBloqueioOpen(false)}
         title="Cliente Bloqueado 🚫"
-        description={`O cliente ${clienteBloqueadoTemp?.nome} possui restrições no cadastro.`}
+        description={`O cliente ${clienteBloqueadoTemp?.nome} possui restrições.`}
         confirmText="Entendi"
         variant="warning"
         showCancel={false}
       />
     </div>
+    </>
   );
 }

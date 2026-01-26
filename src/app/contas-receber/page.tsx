@@ -140,28 +140,63 @@ export default function ContasReceberPage() {
     window.open(`/imprimir/carne/${vendaId}`, '', `width=${w},height=${h},top=100,left=100`);
   };
 
-  const imprimirRecibo = (e: React.MouseEvent, pid: string) => {
-    e.stopPropagation();
-    const w = 800, h = 600;
-    window.open(`/imprimir/recibo/${pid}`, '', `width=${w},height=${h},top=100,left=100`);
-  };
-
   const toggleCliente = (id: string) => setClienteExpandido(prev => prev === id ? null : id);
   const toggleVenda = (vid: string) => setVendasExpandidas(prev => prev.includes(vid) ? prev.filter(i => i !== vid) : [...prev, vid]);
   const abrirModalRecebimento = (e: any, p: any) => { e.stopPropagation(); setParcelaSelecionadaBaixa(p); };
 
+  // --- AQUI ESTÁ A LÓGICA DE BAIXA + RESTITUIÇÃO DE LIMITE ---
   const confirmarBaixa = async () => {
     if (!parcelaSelecionadaBaixa) return;
     setLoadingBaixa(true);
-    const { error } = await supabase.from("parcelas").update({ status: "pago", data_pagamento: new Date().toISOString() }).eq("id", parcelaSelecionadaBaixa.id);
-    if (error) toast.error("Erro ao processar baixa");
-    else {
-      toast.success("Pagamento recebido!");
-      fetchContas();
-      setParcelaSelecionadaBaixa(null);
-      setModalSucessoOpen(true);
+
+    try {
+        // 1. Atualiza Status da Parcela
+        const { error: erroBaixa } = await supabase
+            .from("parcelas")
+            .update({ 
+                status: "pago", 
+                data_pagamento: new Date().toISOString() 
+            })
+            .eq("id", parcelaSelecionadaBaixa.id);
+
+        if (erroBaixa) throw erroBaixa;
+
+        // 2. Devolve Limite ao Cliente (Se ele tiver ID)
+        if (parcelaSelecionadaBaixa.cliente_id) {
+            // Busca dados atuais do cliente para não sobrescrever errado
+            const { data: clienteAtual, error: erroCli } = await supabase
+                .from('clientes')
+                .select('limite, limite_credito') // Pega os dois por segurança
+                .eq('id', parcelaSelecionadaBaixa.cliente_id)
+                .single();
+
+            if (!erroCli && clienteAtual) {
+                // Tenta usar limite_credito (novo), se não limite (antigo), se não 0
+                const limiteAtual = clienteAtual.limite_credito ?? clienteAtual.limite ?? 0;
+                const novoLimite = limiteAtual + Number(parcelaSelecionadaBaixa.valor);
+
+                // Atualiza no banco (tenta atualizar ambos para garantir compatibilidade)
+                await supabase
+                    .from('clientes')
+                    .update({ 
+                        limite: novoLimite,          // Mantém compatibilidade legado
+                        limite_credito: novoLimite   // Novo padrão
+                    })
+                    .eq('id', parcelaSelecionadaBaixa.cliente_id);
+            }
+        }
+
+        toast.success("Pagamento recebido e limite liberado!");
+        fetchContas(); // Recarrega lista
+        setDadosSucesso({ ...parcelaSelecionadaBaixa, valor_pago: parcelaSelecionadaBaixa.valor });
+        setParcelaSelecionadaBaixa(null);
+        setModalSucessoOpen(true);
+
+    } catch (err: any) {
+        toast.error("Erro ao dar baixa: " + err.message);
+    } finally {
+        setLoadingBaixa(false);
     }
-    setLoadingBaixa(false);
   };
 
   const listaFiltradaCompleta = clientesAgrupados.filter(cli => {
@@ -181,7 +216,7 @@ export default function ContasReceberPage() {
   const listaPaginada = listaFiltradaCompleta.slice(startIndex, startIndex + ITENS_POR_PAGINA);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div><h1 className="text-2xl font-bold">Carteira de Clientes</h1><p className="text-gray-500 text-sm">Visão agrupada por vendas.</p></div>
         <div className="bg-white px-4 py-2 rounded-lg border shadow-sm flex items-center gap-3">
@@ -238,7 +273,6 @@ export default function ContasReceberPage() {
                                 </div>
                               </div>
                               <div className="flex items-center gap-4">
-                                {/* Botão Imprimir Carnê Ajustado */}
                                 <button
                                   onClick={(e) => imprimirCarne(e, venda.vendaId)}
                                   className="flex items-center gap-1.5 px-2 py-1 text-[10px] font-bold text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
@@ -282,12 +316,10 @@ export default function ContasReceberPage() {
                                           <td className="px-4 py-3 font-bold text-gray-900">{p.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
                                           <td className="px-4 py-3 text-right">
                                             <div className="flex items-center justify-end gap-2">
-                                              {/* Ícone de Recibo pequeno para parcelas pagas */}
                                               {p.status === 'pago' && (
                                                 <button
                                                   onClick={(e) => {
                                                     e.stopPropagation();
-                                                    // Abre em uma janela popup específica de 400px para não zoar o layout
                                                     window.open(`/imprimir/recibo/${p.id}`, 'Recibo', 'width=400,height=600');
                                                   }}
                                                   className="p-1 text-gray-400 hover:text-green-600 transition-colors"
@@ -297,7 +329,6 @@ export default function ContasReceberPage() {
                                                 </button>
                                               )}
 
-                                              {/* Botão de Receber ou Status Pago */}
                                               {p.status === 'pendente' ? (
                                                 <button
                                                   onClick={(e) => abrirModalRecebimento(e, p)}

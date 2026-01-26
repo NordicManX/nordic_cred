@@ -7,7 +7,7 @@ import { createClient } from "@/src/lib/supabase";
 import {
   LayoutDashboard, Users, ShoppingCart, Wallet,
   Banknote, LogOut, ShieldCheck, Menu, X, Package, 
-  BarChart3,
+  BarChart3, Settings,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -35,6 +35,8 @@ export function Sidebar() {
     { name: "Contas a Receber", icon: Wallet, path: "/contas-receber" },
     { name: "Contas a Pagar", icon: Banknote, path: "/contas-pagar" },
     { name: "Relatórios", icon: BarChart3, path: "/relatorios" },
+    { name: "Configurações", icon: Settings, path: "/admin/configuracoes" },
+    
   ];
 
   return (

@@ -3,180 +3,252 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { createClient } from "@/src/lib/supabase";
-import { Loader2, CheckCircle } from "lucide-react";
-import { format, parseISO } from "date-fns";
+import { Loader2, AlertCircle, Printer, Info } from "lucide-react";
+import { format } from "date-fns";
 
-export default function ImprimirReciboPage() {
+export default function ImprimirReciboVendaPage() {
   const params = useParams();
   const id = params?.id as string;
   const supabase = createClient();
-  const [parcela, setParcela] = useState<any>(null);
+
   const [loading, setLoading] = useState(true);
+  const [erro, setErro] = useState("");
+  const [dados, setDados] = useState<any>(null);
 
   useEffect(() => {
-    if (id) fetchDados();
+    if (id) carregarDadosVenda();
   }, [id]);
 
-  async function fetchDados() {
-    const { data } = await supabase
-      .from("parcelas")
-      .select(`*, clientes:clientes!fk_parcelas_clientes_oficial (nome, cpf), vendas:vendas!fk_parcelas_vendas_oficial (id)`)
-      .eq("id", id)
-      .single();
-    setParcela(data);
-    setLoading(false);
-    
-    if (data) {
-      setTimeout(() => {
-        window.print();
-      }, 1000);
+  async function carregarDadosVenda() {
+    try {
+      const { data: venda, error: errVenda } = await supabase
+        .from("vendas")
+        .select("*, clientes(nome, cpf, telefone, pontos_acumulados)")
+        .eq("id", id)
+        .single();
+
+      if (errVenda) throw new Error("Venda não encontrada.");
+
+      const { data: itens, error: errItens } = await supabase
+        .from("itens_venda")
+        .select("*")
+        .eq("venda_id", id);
+
+      const { data: parcelas } = await supabase
+        .from("parcelas")
+        .select("*")
+        .eq("venda_id", id);
+
+      const { data: config } = await supabase
+        .from("configuracoes")
+        .select("*")
+        .single();
+
+      setDados({ 
+        venda, 
+        itens: itens || [], 
+        parcelas: parcelas || [], 
+        config 
+      });
+
+    } catch (err: any) {
+      console.error(err);
+      setErro(err.message);
+    } finally {
+      setLoading(false);
     }
   }
 
+  useEffect(() => {
+    if (!loading && dados) {
+      setTimeout(() => {
+        window.print();
+      }, 800);
+    }
+  }, [loading, dados]);
+
+  const formatCurrency = (val: number) => val?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) || 'R$ 0,00';
+
+  // Loading em tela cheia para cobrir sidebar
   if (loading) return (
-    <div className="h-screen flex items-center justify-center bg-white">
-      <Loader2 className="animate-spin text-blue-600" />
+    <div className="fixed inset-0 z-[9999] bg-gray-100 flex items-center justify-center">
+        <Loader2 className="animate-spin text-gray-600" />
+    </div>
+  );
+  
+  // Erro em tela cheia
+  if (erro || !dados) return (
+    <div className="fixed inset-0 z-[9999] bg-gray-100 flex flex-col items-center justify-center text-red-500 gap-2">
+        <AlertCircle size={32}/>
+        <p>Recibo não encontrado.</p>
     </div>
   );
 
-  if (!parcela) return <div className="p-10 text-center">Recibo não encontrado.</div>;
+  const { venda, itens, parcelas, config } = dados;
+  const totalParcelado = parcelas.reduce((acc: number, p: any) => acc + p.valor, 0);
+  const valorEntrada = Math.max(0, venda.valor_total - totalParcelado);
+  const pontosGanhos = Math.floor(venda.valor_total * (config?.pontos_por_real || 1));
 
   return (
-    <div className="print-screen-wrapper">
+    // "fixed inset-0 z-[9999]" -> FORÇA TELA CHEIA POR CIMA DA SIDEBAR
+    <div className="fixed inset-0 z-[9999] bg-gray-200 overflow-y-auto flex flex-col items-center py-10 print:bg-white print:p-0 print:static print:block">
+      
+      {/* AVISO APENAS NA TELA */}
+      <div className="mb-6 bg-white border border-gray-300 text-gray-700 p-4 rounded-lg max-w-md text-sm shadow-sm print:hidden flex gap-3 items-start shrink-0">
+        <Info className="shrink-0 mt-0.5 text-blue-600" size={18} />
+        <div>
+            <p className="font-bold text-gray-900">Configuração de Impressão:</p>
+            <p className="mt-1">1. Margens: <strong>"Nenhuma"</strong> ou "Mínima"</p>
+            <p>2. Cabeçalhos e rodapés: <strong>Desmarcar</strong></p>
+            <button onClick={() => window.print()} className="mt-3 bg-gray-900 text-white px-4 py-2 rounded font-bold flex items-center gap-2 hover:bg-black transition-colors text-xs uppercase">
+                <Printer size={16}/> Imprimir
+            </button>
+        </div>
+      </div>
+
       <style jsx global>{`
-        /* 1. RESET TOTAL DE TELA */
-        html, body { 
-          margin: 0 !important; 
-          padding: 0 !important;
-          background-color: #f3f4f6 !important; /* Cor de fundo da tela (cinza) */
+        /* Importando ROBOTO MONO */
+        @import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500;700&display=swap');
+
+        .cupom-fiscal {
+            font-family: 'Roboto Mono', 'Courier New', monospace;
+            width: 80mm;
+            background: #fff;
+            padding: 4mm;
+            color: #000;
+            font-size: 10px;
+            line-height: 1.25;
+            text-transform: uppercase;
         }
 
-        /* 2. CENTRALIZAÇÃO NA TELA (PC) */
-        .print-screen-wrapper {
-          display: flex;
-          justify-content: center;
-          align-items: flex-start;
-          min-height: 100vh;
-          padding: 40px 0;
+        .preview-shadow {
+            box-shadow: 0 10px 30px -10px rgba(0,0,0,0.3);
         }
 
-        .recibo-papel {
-          width: 80mm;
-          background: white;
-          padding: 10mm 5mm;
-          box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
-          font-family: 'Courier New', Courier, monospace;
-          color: black;
+        .divider {
+            border-top: 1px dashed #000;
+            margin: 6px 0;
+            display: block;
         }
 
-        .divider { 
-          border-top: 1px dashed black; 
-          margin: 10px 0;
-          width: 100%;
-        }
+        .text-right { text-align: right; }
+        .text-center { text-align: center; }
+        .font-bold { font-weight: 700; }
+        .flex-between { display: flex; justify-content: space-between; }
 
-        /* 3. A MÁGICA DA IMPRESSÃO (O TIRO DE CANHÃO) */
         @media print {
-          /* Esconde TUDO o que estiver no body */
-          body * {
-            visibility: hidden;
-            margin: 0 !important;
-            padding: 0 !important;
-          }
-
-          /* Força o wrapper e o papel a ficarem visíveis e resetados */
-          .print-screen-wrapper, 
-          .print-screen-wrapper *,
-          .recibo-papel, 
-          .recibo-papel * {
-            visibility: visible !important;
-          }
-
-          /* Posiciona o papel exatamente no canto superior esquerdo da folha */
-          .print-screen-wrapper {
-            position: fixed !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: 80mm !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            background: white !important;
-            display: block !important;
-          }
-
-          .recibo-papel {
-            width: 80mm !important;
-            box-shadow: none !important;
-            margin: 0 !important;
-            padding: 5mm !important;
-            border: none !important;
-          }
-
-          @page { 
-            margin: 0; 
-            size: 80mm auto; 
-          }
+            @page { margin: 0; size: auto; }
+            body { margin: 0; padding: 0; background: white; }
+            
+            body * { visibility: hidden; }
+            
+            #area-impressao, #area-impressao * { 
+                visibility: visible; 
+            }
+            #area-impressao {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                max-width: 80mm;
+                margin: 0 auto;
+                padding: 0;
+                box-shadow: none;
+            }
         }
       `}</style>
 
-      {/* ELEMENTO QUE SERÁ IMPRESSO */}
-      <div className="recibo-papel">
+      {/* ÁREA DE IMPRESSÃO */}
+      <div id="area-impressao" className="cupom-fiscal preview-shadow">
         
-        {/* Cabeçalho */}
+        {/* CABEÇALHO */}
         <div className="text-center">
-          <h1 className="text-xl font-bold">NORDICCRED</h1>
-          <p className="text-[11px]">Gestão Inteligente de Crediário</p>
-          <div className="divider" />
-          <p className="font-bold text-sm">COMPROVANTE DE PAGAMENTO</p>
-          <div className="divider" />
+          <div className="font-bold" style={{ fontSize: '14px', marginBottom: '2px' }}>NORDICCRED</div>
+          <div style={{ fontSize: '9px' }}>Rua da Tecnologia, 123 - Centro</div>
+          <div style={{ fontSize: '9px' }}>CNPJ: 00.000.000/0001-00</div>
+          <div className="divider"></div>
+          <div className="font-bold">COMPROVANTE DE VENDA</div>
+          <div className="divider"></div>
         </div>
 
-        {/* Dados */}
-        <div className="w-full text-[12px] space-y-1.5 mt-2">
-          <div className="flex justify-between">
-            <span>DATA PAGO:</span>
-            <span className="font-bold">
-              {parcela.data_pagamento ? format(parseISO(parcela.data_pagamento), "dd/MM/yyyy HH:mm") : format(new Date(), "dd/MM/yyyy HH:mm")}
-            </span>
-          </div>
-          
-          <div className="flex justify-between">
-            <span>VENDA:</span>
-            <span className="font-bold">#{parcela.vendas?.id.slice(0, 8).toUpperCase()}</span>
-          </div>
-
-          <div className="flex justify-between">
-            <span>PARCELA:</span>
-            <span className="font-bold">{parcela.numero_parcela}ª via</span>
-          </div>
-
-          <div className="divider" />
-
-          <div className="flex flex-col">
-            <span>CLIENTE:</span>
-            <span className="font-bold uppercase leading-tight">{parcela.clientes?.nome}</span>
-            <span>CPF: {parcela.clientes?.cpf}</span>
-          </div>
-
-          <div className="divider" />
-
-          <div className="flex justify-between items-center py-2">
-            <span className="text-sm font-bold">VALOR RECEBIDO:</span>
-            <span className="text-xl font-bold">R$ {parcela.valor.toFixed(2)}</span>
-          </div>
-
-          <div className="divider" />
+        {/* DADOS */}
+        <div style={{ fontSize: '10px' }}>
+            <div className="flex-between"><span>DATA:</span> <span>{format(new Date(venda.data_venda), "dd/MM/yyyy HH:mm")}</span></div>
+            <div className="flex-between"><span>VENDA:</span> <span>#{venda.id.slice(0, 6)}</span></div>
+            <div className="divider"></div>
+            <div>CLI: {venda.clientes?.nome?.slice(0, 25) || "CONSUMIDOR FINAL"}</div>
+            {venda.clientes?.cpf && <div>CPF: {venda.clientes.cpf}</div>}
         </div>
 
-        {/* Rodapé */}
-        <div className="text-center w-full mt-4">
-          <div className="flex justify-center mb-2">
-            {/* Usando um SVG simples para garantir que apareça na impressão */}
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
-          </div>
-          <p className="font-bold text-sm uppercase">PAGAMENTO CONFIRMADO</p>
-          <p className="text-[10px] mt-4 uppercase">Obrigado pela preferência!</p>
-          <p className="text-[10px] font-bold">www.nordictech.tech</p>
+        <div className="divider"></div>
+
+        {/* ITENS */}
+        <div style={{ marginBottom: '6px' }}>
+            {itens.map((item: any, i: number) => (
+              <div key={i} style={{ marginBottom: '4px' }}>
+                <div className="font-bold">{item.produto_nome.slice(0, 35)}</div>
+                <div className="flex-between" style={{ paddingLeft: '0', fontSize: '10px' }}>
+                    <span>{item.quantidade} x {formatCurrency(item.valor_unitario)}</span>
+                    <span>{formatCurrency(item.quantidade * item.valor_unitario)}</span>
+                </div>
+              </div>
+            ))}
+        </div>
+
+        <div className="divider"></div>
+
+        {/* TOTAIS */}
+        <div className="flex-between"><span>SUBTOTAL</span> <span>{formatCurrency(venda.valor_total + (venda.desconto || 0))}</span></div>
+        {venda.desconto > 0 && <div className="flex-between"><span>DESCONTO</span> <span>-{formatCurrency(venda.desconto)}</span></div>}
+        
+        <div className="flex-between font-bold" style={{ fontSize: '12px', marginTop: '6px' }}>
+            <span>TOTAL A PAGAR</span> 
+            <span>{formatCurrency(venda.valor_total)}</span>
+        </div>
+
+        <div className="divider"></div>
+
+        {/* PAGAMENTO */}
+        <div style={{ marginTop: '4px' }}>
+            <div className="text-center font-bold" style={{ marginBottom: '4px' }}>FORMA DE PAGAMENTO</div>
+            
+            {venda.forma_pagamento === 'crediario' ? (
+                <>
+                    {valorEntrada > 0.01 && (
+                        <div className="flex-between"><span>ENTRADA</span> <span>{formatCurrency(valorEntrada)}</span></div>
+                    )}
+                    {parcelas.length > 0 ? (
+                        <div style={{ marginTop: '2px' }}>
+                            {parcelas.map((p: any) => (
+                                <div key={p.id} className="flex-between" style={{ fontSize: '9px' }}>
+                                    <span>{p.numero_parcela}x {format(new Date(p.data_vencimento), "dd/MM/yy")}</span>
+                                    <span>{formatCurrency(p.valor)}</span>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="flex-between"><span>A PRAZO</span> <span>{formatCurrency(venda.valor_total - valorEntrada)}</span></div>
+                    )}
+                </>
+            ) : (
+                <div className="flex-between">
+                    <span>{venda.forma_pagamento}</span>
+                    <span>{formatCurrency(venda.valor_total)}</span>
+                </div>
+            )}
+        </div>
+
+        {/* FIDELIDADE */}
+        {venda.clientes && (
+            <div style={{ marginTop: '10px', borderTop: '1px dashed #000', paddingTop: '6px', textAlign: 'center' }}>
+                <div style={{ fontSize: '9px' }}>FIDELIDADE NORDIC</div>
+                <div className="font-bold">GANHOU: {pontosGanhos} | SALDO: {venda.clientes.pontos_acumulados}</div>
+            </div>
+        )}
+
+        <div className="text-center" style={{ marginTop: '15px', fontSize: '9px' }}>
+          <div>OBRIGADO PELA PREFERENCIA</div>
+          <div>*** NORDIC TECH ***</div>
         </div>
 
       </div>
