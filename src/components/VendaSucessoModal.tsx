@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { CheckCircle, Printer, X, ShoppingBag, MessageCircle } from "lucide-react";
+import { CheckCircle, Printer, ShoppingBag, MessageCircle } from "lucide-react"; // Removido X
 import { createClient } from "@/src/lib/supabase";
 import { format } from "date-fns";
 
@@ -57,22 +57,20 @@ export function VendaSucessoModal({ isOpen, onClose, vendaId, formaPagamento }: 
     return mapa[tipo] || tipo?.toUpperCase() || 'OUTROS';
   };
 
-  // --- IMPRESSÃO EM NOVA JANELA (POPUP) ---
+  // --- CÁLCULOS MATEMÁTICOS REAIS ---
+  // Calculamos a soma dos itens (Bruto)
+  const totalItens = itens.reduce((acc, item) => acc + (item.quantidade * item.valor_unitario), 0);
+  // Pegamos o desconto (ou 0)
+  const valorDesconto = venda?.desconto || 0;
+  // Calculamos o final (Líquido)
+  const totalFinal = totalItens - valorDesconto;
+
+  // --- IMPRESSÃO EM NOVA ABA (MAXIMIZADO) ---
   const handlePrint = () => {
     if (printRef.current) {
       const conteudo = printRef.current.innerHTML;
       
-      // Configurações para centralizar a janela na tela
-      const width = 350;
-      const height = 600;
-      const left = (window.screen.width - width) / 2;
-      const top = (window.screen.height - height) / 2;
-
-      const win = window.open(
-        '', 
-        'Comprovante', 
-        `width=${width},height=${height},top=${top},left=${left},scrollbars=yes`
-      );
+      const win = window.open('', '_blank');
       
       if (win) {
         win.document.write(`
@@ -86,14 +84,21 @@ export function VendaSucessoModal({ isOpen, onClose, vendaId, formaPagamento }: 
                 }
                 body {
                   font-family: 'Courier New', Courier, monospace;
-                  font-size: 12px;
-                  width: 100%;
-                  max-width: 80mm;
-                  margin: 0 auto;
-                  padding: 5px;
-                  color: #000;
+                  background-color: #525659;
+                  margin: 0;
+                  padding: 20px;
+                  display: flex;
+                  justify-content: center;
+                }
+                .receipt {
                   background-color: #fff;
+                  width: 80mm;
+                  padding: 10px;
+                  box-shadow: 0 0 15px rgba(0,0,0,0.5);
+                  min-height: 200px;
+                  color: #000;
                   line-height: 1.2;
+                  font-size: 12px;
                 }
                 .text-center { text-align: center; }
                 .text-right { text-align: right; }
@@ -105,17 +110,18 @@ export function VendaSucessoModal({ isOpen, onClose, vendaId, formaPagamento }: 
                 td { vertical-align: top; padding-top: 2px; }
                 .col-qtd { width: 10%; text-align: center; }
                 .col-vl { width: 25%; text-align: right; }
-                .total-row { font-size: 14px; margin-top: 5px; }
+                .total-row { font-size: 12px; margin-top: 5px; }
+                .final-total { font-size: 16px; margin-top: 5px; font-weight: bold; }
                 .footer { font-size: 10px; margin-top: 10px; }
               </style>
             </head>
             <body>
-              ${conteudo}
+              <div class="receipt">
+                ${conteudo}
+              </div>
               <script>
-                // Espera carregar e imprime
                 setTimeout(() => { 
                     window.print(); 
-                    // Opcional: window.close(); // Se quiser fechar automático
                 }, 500);
               </script>
             </body>
@@ -129,7 +135,7 @@ export function VendaSucessoModal({ isOpen, onClose, vendaId, formaPagamento }: 
 
   const handleWhatsApp = () => {
     if (!venda) return;
-    const link = `https://wa.me/?text=${encodeURIComponent(`*COMPROVANTE DE VENDA*\nValor: ${formatCurrency(venda.valor_total)}\nVerifique sua compra!`)}`;
+    const link = `https://wa.me/?text=${encodeURIComponent(`*COMPROVANTE DE VENDA*\nValor: ${formatCurrency(totalFinal)}\nVerifique sua compra!`)}`;
     window.open(link, '_blank');
   };
 
@@ -137,7 +143,6 @@ export function VendaSucessoModal({ isOpen, onClose, vendaId, formaPagamento }: 
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in zoom-in-95">
-      {/* Modal Principal - Overflow Visible para ícone flutuante */}
       <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl flex flex-col max-h-[90vh] relative overflow-visible">
         
         {/* Ícone de Sucesso Flutuante */}
@@ -147,28 +152,40 @@ export function VendaSucessoModal({ isOpen, onClose, vendaId, formaPagamento }: 
              </div>
         </div>
 
-        {/* Header do Modal (Visualização na Tela) */}
+        {/* Header Modal */}
         <div className="mt-14 text-center px-6">
           <h2 className="text-2xl font-bold text-gray-900">Venda Finalizada!</h2>
           <p className="text-gray-500 text-sm mt-1">Tudo certo. O que deseja fazer agora?</p>
         </div>
 
-        {/* Resumo Visual na Tela */}
+        {/* --- PRÉ-VISUALIZAÇÃO NA TELA --- */}
         <div className="p-6 bg-gray-50 mt-6 mx-4 rounded-xl border border-gray-200">
+            {valorDesconto > 0 && (
+                <div className="flex justify-between items-center text-sm mb-1 text-gray-400">
+                    <span>Subtotal</span>
+                    <span className="line-through">{formatCurrency(totalItens)}</span>
+                </div>
+            )}
+            
             <div className="flex justify-between items-center text-sm mb-2">
                 <span className="text-gray-500">Total Pago</span>
-                <span className="font-bold text-lg text-green-700">{venda ? formatCurrency(venda.valor_total) : 'R$ 0,00'}</span>
+                <span className="font-bold text-lg text-green-700">{formatCurrency(totalFinal)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm">
+            
+            {valorDesconto > 0 && (
+                <div className="flex justify-between items-center text-xs mb-3 bg-green-100 text-green-700 px-2 py-1 rounded">
+                    <span>Desconto Aplicado</span>
+                    <span className="font-bold">-{formatCurrency(valorDesconto)}</span>
+                </div>
+            )}
+
+            <div className="flex justify-between items-center text-sm pt-2 border-t border-gray-200">
                 <span className="text-gray-500">Cliente</span>
                 <span className="font-medium text-gray-900 truncate max-w-[150px]">{venda?.clientes?.nome || "Consumidor Final"}</span>
             </div>
         </div>
 
-        {/* --- CONTEÚDO OCULTO --- 
-            Isso aqui NÃO aparece no modal, serve apenas de template 
-            para o Javascript copiar para a nova janela de impressão.
-        */}
+        {/* --- CONTEÚDO OCULTO (TEMPLATE PARA A NOVA ABA) --- */}
         <div style={{ display: 'none' }}>
             <div ref={printRef}>
                 <div className="text-center">
@@ -210,15 +227,23 @@ export function VendaSucessoModal({ isOpen, onClose, vendaId, formaPagamento }: 
 
                 <div className="divider"></div>
 
-                <div className="total-row text-right">
-                    <div className="font-bold">TOTAL: {venda ? formatCurrency(venda.valor_total) : '0,00'}</div>
+                {/* LOGICA DE TOTAIS CORRIGIDA */}
+                <div className="text-right">
+                    
+                    {/* Se tiver desconto, mostra o subtotal antes */}
+                    {valorDesconto > 0 && (
+                        <>
+                            <div className="total-row">SUBTOTAL: {formatCurrency(totalItens)}</div>
+                            <div className="total-row">DESCONTO: -{formatCurrency(valorDesconto)}</div>
+                            <div className="divider"></div>
+                        </>
+                    )}
+
+                    <div className="final-total">TOTAL: {formatCurrency(totalFinal)}</div>
                 </div>
                 
                 <div style={{ fontSize: '11px', marginTop: '5px' }}>
                     <div className="text-right">Forma: {formatarPagamento(formaPagamento)}</div>
-                    {venda?.desconto > 0 && (
-                        <div className="text-right">Desconto: -{formatCurrency(venda.desconto)}</div>
-                    )}
                 </div>
 
                 <div className="divider"></div>

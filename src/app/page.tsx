@@ -4,11 +4,12 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/src/lib/supabase";
 import { 
   DollarSign, Users, TrendingUp, AlertCircle, 
-  Wallet, ArrowUpRight, ArrowDownRight, ShoppingBag, Loader2, Target
+  Wallet, ArrowUpRight, ShoppingBag, Loader2, Target
 } from "lucide-react";
-import { startOfMonth, endOfMonth, format, isBefore, parseISO, eachDayOfInterval, getDate, getMonth, getYear } from "date-fns";
+import { startOfMonth, endOfMonth, isBefore, parseISO, eachDayOfInterval, getDate, getMonth, getYear, format } from "date-fns";
 import Link from "next/link";
 import confetti from "canvas-confetti";
+import { DashboardHeader } from "@/src/components/DashboardHeader"; // <--- Importando o cabeçalho novo
 
 export default function DashboardPage() {
   const supabase = createClient();
@@ -63,7 +64,7 @@ export default function DashboardPage() {
     const fimMes = endOfMonth(hoje).toISOString();
 
     try {
-      // 1. BUSCAR VENDAS (Traz tudo do mês para filtrar no front)
+      // 1. BUSCAR VENDAS
       const { data: vendasMes, error: errVendas } = await supabase
         .from("vendas")
         .select("data_venda, valor_total") 
@@ -78,11 +79,8 @@ export default function DashboardPage() {
       const { data: ultimas } = await supabase.from("vendas").select("id, valor_total, data_venda, clientes(nome)").order("data_venda", { ascending: false }).limit(5);
 
       // --- PROCESSAMENTO ---
-
-      // A. Vendas Totais e Hoje
       const totalVendasMes = vendasMes?.reduce((acc, v) => acc + v.valor_total, 0) || 0;
       
-      // Filtro manual seguro para "Hoje"
       const diaHoje = getDate(hoje);
       const mesHoje = getMonth(hoje);
       const anoHoje = getYear(hoje);
@@ -94,7 +92,6 @@ export default function DashboardPage() {
       
       setVendasHoje(totalHoje);
 
-      // B. Financeiro
       const totalRecebidoMes = parcelas?.filter(p => p.status === 'pago' && p.data_pagamento >= inicioMes && p.data_pagamento <= fimMes).reduce((acc, p) => acc + p.valor, 0) || 0;
       const totalPendencia = parcelas?.filter(p => p.status === 'pendente').reduce((acc, p) => acc + p.valor, 0) || 0;
       const totalAtraso = parcelas?.filter(p => p.status === 'pendente' && isBefore(parseISO(p.data_vencimento), hoje)).reduce((acc, p) => acc + p.valor, 0) || 0;
@@ -109,11 +106,10 @@ export default function DashboardPage() {
       
       if (ultimas) setUltimasVendas(ultimas);
 
-      // C. MONTAR GRÁFICO (LÓGICA CORRIGIDA)
+      // C. MONTAR GRÁFICO
       const diasDoMes = eachDayOfInterval({ start: startOfMonth(hoje), end: hoje }); 
       
       const grafico = diasDoMes.map(diaRef => {
-        // Compara dia, mês e ano explicitamente para evitar erros de fuso horário
         const diaNum = getDate(diaRef);
         const mesNum = getMonth(diaRef);
         
@@ -137,8 +133,8 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center text-blue-600 gap-2">
-        <Loader2 className="animate-spin" /> Carregando...
+      <div className="flex h-full w-full items-center justify-center text-blue-600 gap-2 min-h-[500px]">
+        <Loader2 className="animate-spin" /> Carregando Dashboard...
       </div>
     );
   }
@@ -146,23 +142,22 @@ export default function DashboardPage() {
   const porcentagemMeta = Math.min(100, (vendasHoje / META_DIARIA) * 100);
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
+    <div className="space-y-6 animate-in fade-in duration-500 pb-10">
       
-      {/* Header */}
-      <div className="flex justify-between items-end">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-          <p className="text-gray-500 text-sm">Visão geral de {format(new Date(), 'MMMM/yyyy')}</p>
-        </div>
-        <button 
-          onClick={carregarDados} 
-          className="text-sm text-blue-600 hover:underline cursor-pointer flex items-center gap-1"
-        >
-          <Loader2 size={12} className={loading ? "animate-spin" : "hidden"} /> Atualizar
-        </button>
+      {/* 1. NOVO CABEÇALHO */}
+      <DashboardHeader />
+
+      {/* Botãozinho discreto de atualizar */}
+      <div className="flex justify-end -mt-4 mb-2">
+         <button 
+           onClick={carregarDados} 
+           className="text-xs text-gray-400 hover:text-blue-600 flex items-center gap-1 transition-colors"
+         >
+           <Loader2 size={10} /> Atualizar dados
+         </button>
       </div>
 
-      {/* Meta do Dia */}
+      {/* 2. META DO DIA */}
       <div className="bg-gradient-to-r from-gray-900 to-gray-800 rounded-xl p-6 text-white shadow-lg relative overflow-hidden">
         <div className="flex justify-between items-center relative z-10">
           <div>
@@ -189,7 +184,7 @@ export default function DashboardPage() {
         <Target size={150} className="absolute -bottom-10 -right-10 opacity-5 text-white" />
       </div>
 
-      {/* KPIs */}
+      {/* 3. CARDS DE KPI */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <KPICard title="Vendas (Mês)" value={kpis.vendasMes} icon={<ShoppingBag size={20}/>} sub="Volume Bruto" color="blue" />
         <KPICard title="Caixa (Recebido)" value={kpis.recebidoMes} icon={<Wallet size={20}/>} sub="Entradas Reais" color="green" />
@@ -199,7 +194,7 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* GRÁFICO (CORRIGIDO) */}
+        {/* 4. GRÁFICO */}
         <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
           <h3 className="font-bold text-gray-800 mb-6">Desempenho Diário</h3>
           
@@ -209,7 +204,6 @@ export default function DashboardPage() {
             ) : (
                 dadosGrafico.map((d) => {
                     const maxVal = Math.max(...dadosGrafico.map(i => i.valor), 100); 
-                    // Garante que a barra apareça se tiver valor > 0 (mínimo 5%)
                     let altura = (d.valor / maxVal) * 100;
                     if (d.valor > 0 && altura < 5) altura = 5;
 
@@ -220,8 +214,6 @@ export default function DashboardPage() {
                                     style={{ height: `${altura}%` }} 
                                     className={`w-full max-w-[30px] rounded-t-sm transition-all duration-500 ${d.valor > 0 ? 'bg-blue-500 group-hover:bg-blue-600' : 'bg-gray-100 h-1'}`}
                                 ></div>
-                                
-                                {/* Tooltip só aparece se tiver valor */}
                                 {d.valor > 0 && (
                                     <div className="absolute bottom-full mb-2 opacity-0 group-hover:opacity-100 transition-opacity bg-black text-white text-xs px-2 py-1 rounded whitespace-nowrap z-10 pointer-events-none shadow-lg">
                                         Dia {d.dia}: R$ {d.valor.toLocaleString('pt-BR')}
@@ -236,7 +228,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Lista e Atalhos */}
+        {/* 5. LISTAS LATERAIS */}
         <div className="space-y-6">
             <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
                 <h3 className="font-bold text-gray-800 mb-4">Acesso Rápido</h3>
@@ -280,6 +272,7 @@ export default function DashboardPage() {
   );
 }
 
+// Componentes Auxiliares (Cards)
 function KPICard({ title, value, icon, sub, color }: any) {
     const colors: any = { 
         blue: "bg-blue-100 text-blue-600", green: "bg-green-100 text-green-600", 
