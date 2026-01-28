@@ -59,135 +59,153 @@ export default function ImprimirReciboVendaPage() {
     }
   }
 
-  useEffect(() => {
-    if (!loading && dados) {
-      setTimeout(() => {
-        window.print();
-      }, 800);
-    }
-  }, [loading, dados]);
+  // Auto-print removido para você conferir a tela antes.
+  // useEffect(() => {
+  //   if (!loading && dados) {
+  //     setTimeout(() => { window.print(); }, 800);
+  //   }
+  // }, [loading, dados]);
 
   const formatCurrency = (val: number) => val?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) || 'R$ 0,00';
 
-  // Loading em tela cheia para cobrir sidebar
-  if (loading) return (
-    <div className="fixed inset-0 z-[9999] bg-gray-100 flex items-center justify-center">
-        <Loader2 className="animate-spin text-gray-600" />
-    </div>
-  );
+  if (loading) return <div className="fixed inset-0 z-[99999] bg-zinc-800 flex items-center justify-center"><Loader2 className="animate-spin text-white" /></div>;
   
-  // Erro em tela cheia
   if (erro || !dados) return (
-    <div className="fixed inset-0 z-[9999] bg-gray-100 flex flex-col items-center justify-center text-red-500 gap-2">
+    <div className="fixed inset-0 z-[99999] bg-zinc-800 flex flex-col items-center justify-center text-red-400 gap-2">
         <AlertCircle size={32}/>
         <p>Recibo não encontrado.</p>
     </div>
   );
 
   const { venda, itens, parcelas, config } = dados;
+  
+  const metodoPagamento = (venda.forma_pagamento || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  const detalhes = venda.detalhes || {};
+  const valorTotal = venda.valor_total;
+  const valorRecebido = detalhes.valor_recebido !== undefined ? detalhes.valor_recebido : valorTotal;
+  const troco = detalhes.troco || 0;
   const totalParcelado = parcelas.reduce((acc: number, p: any) => acc + p.valor, 0);
-  const valorEntrada = Math.max(0, venda.valor_total - totalParcelado);
-  const pontosGanhos = Math.floor(venda.valor_total * (config?.pontos_por_real || 1));
+  const valorEntrada = Math.max(0, valorTotal - totalParcelado);
+  const pontosGanhos = venda.pontos_ganhos || detalhes.pontos_ganhos_estimados || Math.floor(valorTotal * (config?.pontos_por_real || 1));
 
   return (
-    // "fixed inset-0 z-[9999]" -> FORÇA TELA CHEIA POR CIMA DA SIDEBAR
-    <div className="fixed inset-0 z-[9999] bg-gray-200 overflow-y-auto flex flex-col items-center py-10 print:bg-white print:p-0 print:static print:block">
+    // TELA DE FUNDO (VISUALIZAÇÃO)
+    <div className="fixed inset-0 z-[99999] bg-zinc-700 overflow-y-auto flex flex-col items-center py-10 print:p-0 print:bg-white print:overflow-visible print:static">
       
-      {/* AVISO APENAS NA TELA */}
-      <div className="mb-6 bg-white border border-gray-300 text-gray-700 p-4 rounded-lg max-w-md text-sm shadow-sm print:hidden flex gap-3 items-start shrink-0">
+      {/* AVISO DE CONFIGURAÇÃO (SOMENTE TELA) */}
+      <div className="no-print bg-white border border-gray-300 text-gray-800 p-4 rounded-lg max-w-md text-sm shadow-xl flex gap-3 items-start shrink-0 mb-6 animate-in slide-in-from-top-4">
         <Info className="shrink-0 mt-0.5 text-blue-600" size={18} />
         <div>
-            <p className="font-bold text-gray-900">Configuração de Impressão:</p>
-            <p className="mt-1">1. Margens: <strong>"Nenhuma"</strong> ou "Mínima"</p>
+            <p className="font-bold">Dica de Impressão:</p>
+            <p className="mt-1">1. Margens: <strong>"Nenhuma"</strong></p>
             <p>2. Cabeçalhos e rodapés: <strong>Desmarcar</strong></p>
-            <button onClick={() => window.print()} className="mt-3 bg-gray-900 text-white px-4 py-2 rounded font-bold flex items-center gap-2 hover:bg-black transition-colors text-xs uppercase">
-                <Printer size={16}/> Imprimir
+            <button onClick={() => window.print()} className="mt-3 bg-zinc-900 text-white px-4 py-2 rounded font-bold flex items-center gap-2 hover:bg-black transition-colors text-xs uppercase shadow-md w-full justify-center">
+                <Printer size={16}/> Imprimir Agora
             </button>
         </div>
       </div>
 
       <style jsx global>{`
-        /* Importando ROBOTO MONO */
-        @import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&display=swap');
 
+        /* --- ESTILO NA TELA --- */
         .cupom-fiscal {
-            font-family: 'Roboto Mono', 'Courier New', monospace;
+            font-family: 'Courier Prime', 'Courier New', monospace;
             width: 80mm;
+            min-height: 100mm;
             background: #fff;
-            padding: 4mm;
+            padding: 5mm;
             color: #000;
-            font-size: 10px;
-            line-height: 1.25;
+            font-size: 11px;
+            line-height: 1.2;
             text-transform: uppercase;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); /* Sombra bonita na tela */
         }
 
-        .preview-shadow {
-            box-shadow: 0 10px 30px -10px rgba(0,0,0,0.3);
+        .divider { 
+            border-bottom: 1px dashed #000; 
+            margin: 6px 0; 
+            width: 100%;
+            display: block; 
         }
-
-        .divider {
-            border-top: 1px dashed #000;
-            margin: 6px 0;
-            display: block;
-        }
-
+        
+        .flex-between { display: flex; justify-content: space-between; }
         .text-right { text-align: right; }
         .text-center { text-align: center; }
-        .font-bold { font-weight: 700; }
-        .flex-between { display: flex; justify-content: space-between; }
+        .font-bold { font-weight: bold; }
 
+        /* --- O SEGREDO DA IMPRESSÃO CENTRALIZADA --- */
         @media print {
             @page { margin: 0; size: auto; }
-            body { margin: 0; padding: 0; background: white; }
             
-            body * { visibility: hidden; }
-            
-            #area-impressao, #area-impressao * { 
-                visibility: visible; 
+            /* 1. Esconde TUDO na tela */
+            body {
+                background-color: white !important;
+                margin: 0 !important;
+                padding: 0 !important;
             }
+            body * {
+                visibility: hidden;
+            }
+
+            /* 2. Mostra APENAS o recibo */
+            #area-impressao, #area-impressao * {
+                visibility: visible;
+            }
+
+            /* 3. Centraliza ABSOLUTAMENTE na folha */
             #area-impressao {
                 position: absolute;
                 left: 0;
+                right: 0;
                 top: 0;
-                width: 100%;
-                max-width: 80mm;
-                margin: 0 auto;
-                padding: 0;
-                box-shadow: none;
+                margin: 0 auto; /* ISSO CENTRALIZA HORIZONTALMENTE */
+                
+                width: 80mm; /* Garante a largura correta */
+                box-shadow: none; /* Remove a sombra do papel */
+                padding: 5mm; /* Mantém o espaçamento interno */
+                background: white;
             }
+
+            /* Esconde o aviso */
+            .no-print { display: none !important; }
         }
       `}</style>
 
       {/* ÁREA DE IMPRESSÃO */}
-      <div id="area-impressao" className="cupom-fiscal preview-shadow">
+      <div id="area-impressao" className="cupom-fiscal">
         
         {/* CABEÇALHO */}
         <div className="text-center">
-          <div className="font-bold" style={{ fontSize: '14px', marginBottom: '2px' }}>NORDICCRED</div>
-          <div style={{ fontSize: '9px' }}>Rua da Tecnologia, 123 - Centro</div>
-          <div style={{ fontSize: '9px' }}>CNPJ: 00.000.000/0001-00</div>
+          <div className="font-bold" style={{ fontSize: '14px' }}>NORDICCRED</div>
+          <div style={{ fontSize: '10px' }}>Rua da Tecnologia, 123 - Centro</div>
+          <div style={{ fontSize: '10px' }}>CNPJ: 00.000.000/0001-00</div>
           <div className="divider"></div>
           <div className="font-bold">COMPROVANTE DE VENDA</div>
           <div className="divider"></div>
         </div>
 
-        {/* DADOS */}
+        {/* DADOS GERAIS */}
         <div style={{ fontSize: '10px' }}>
             <div className="flex-between"><span>DATA:</span> <span>{format(new Date(venda.data_venda), "dd/MM/yyyy HH:mm")}</span></div>
-            <div className="flex-between"><span>VENDA:</span> <span>#{venda.id.slice(0, 6)}</span></div>
+            <div className="flex-between"><span>VENDA:</span> <span>#{venda.id.slice(0, 6).toUpperCase()}</span></div>
             <div className="divider"></div>
-            <div>CLI: {venda.clientes?.nome?.slice(0, 25) || "CONSUMIDOR FINAL"}</div>
+            <div>CLI: {venda.clientes?.nome?.slice(0, 25).toUpperCase() || "CONSUMIDOR FINAL"}</div>
             {venda.clientes?.cpf && <div>CPF: {venda.clientes.cpf}</div>}
         </div>
 
         <div className="divider"></div>
 
         {/* ITENS */}
-        <div style={{ marginBottom: '6px' }}>
+        <div className="mb-1">
+            <div className="flex-between font-bold" style={{ fontSize: '10px', marginBottom: '4px' }}>
+                <span>ITEM</span>
+                <span>TOTAL</span>
+            </div>
             {itens.map((item: any, i: number) => (
               <div key={i} style={{ marginBottom: '4px' }}>
-                <div className="font-bold">{item.produto_nome.slice(0, 35)}</div>
-                <div className="flex-between" style={{ paddingLeft: '0', fontSize: '10px' }}>
+                <div className="font-bold">{item.produto_nome.slice(0, 30).toUpperCase()}</div>
+                <div className="flex-between" style={{ fontSize: '10px' }}>
                     <span>{item.quantidade} x {formatCurrency(item.valor_unitario)}</span>
                     <span>{formatCurrency(item.quantidade * item.valor_unitario)}</span>
                 </div>
@@ -201,55 +219,82 @@ export default function ImprimirReciboVendaPage() {
         <div className="flex-between"><span>SUBTOTAL</span> <span>{formatCurrency(venda.valor_total + (venda.desconto || 0))}</span></div>
         {venda.desconto > 0 && <div className="flex-between"><span>DESCONTO</span> <span>-{formatCurrency(venda.desconto)}</span></div>}
         
-        <div className="flex-between font-bold" style={{ fontSize: '12px', marginTop: '6px' }}>
+        <div className="divider"></div>
+        <div className="flex-between font-bold" style={{ fontSize: '14px' }}>
             <span>TOTAL A PAGAR</span> 
-            <span>{formatCurrency(venda.valor_total)}</span>
+            <span>{formatCurrency(valorTotal)}</span>
         </div>
 
-        <div className="divider"></div>
-
         {/* PAGAMENTO */}
-        <div style={{ marginTop: '4px' }}>
-            <div className="text-center font-bold" style={{ marginBottom: '4px' }}>FORMA DE PAGAMENTO</div>
+        <div style={{ marginTop: '8px' }}>
+            <div className="text-center font-bold mb-1" style={{ fontSize: '10px' }}>FORMA DE PAGAMENTO</div>
             
-            {venda.forma_pagamento === 'crediario' ? (
+            {/* DINHEIRO */}
+            {metodoPagamento === 'dinheiro' && (
                 <>
-                    {valorEntrada > 0.01 && (
-                        <div className="flex-between"><span>ENTRADA</span> <span>{formatCurrency(valorEntrada)}</span></div>
+                    <div className="flex-between">
+                        <span>DINHEIRO</span>
+                        <span>{formatCurrency(valorRecebido)}</span>
+                    </div>
+                    {troco > 0 && (
+                        <div className="flex-between font-bold">
+                            <span>TROCO</span>
+                            <span>{formatCurrency(troco)}</span>
+                        </div>
                     )}
-                    {parcelas.length > 0 ? (
-                        <div style={{ marginTop: '2px' }}>
+                </>
+            )}
+
+            {/* PIX / CARTÃO */}
+            {['pix', 'credito', 'debito'].includes(metodoPagamento) && (
+                <div className="flex-between uppercase">
+                    <span>{venda.forma_pagamento}</span>
+                    <span>{formatCurrency(valorTotal)}</span>
+                </div>
+            )}
+
+            {/* CREDIÁRIO */}
+            {metodoPagamento === 'crediario' && (
+                <>
+                    {valorEntrada > 0.01 ? (
+                        <div className="flex-between">
+                            <span>ENTRADA</span> 
+                            <span>{formatCurrency(valorEntrada)}</span>
+                        </div>
+                    ) : (
+                        null
+                    )}
+
+                    {parcelas.length > 0 && (
+                        <div style={{ marginTop: '4px' }}>
                             {parcelas.map((p: any) => (
-                                <div key={p.id} className="flex-between" style={{ fontSize: '9px' }}>
+                                <div key={p.id} className="flex-between" style={{ fontSize: '10px' }}>
                                     <span>{p.numero_parcela}x {format(new Date(p.data_vencimento), "dd/MM/yy")}</span>
                                     <span>{formatCurrency(p.valor)}</span>
                                 </div>
                             ))}
                         </div>
-                    ) : (
-                        <div className="flex-between"><span>A PRAZO</span> <span>{formatCurrency(venda.valor_total - valorEntrada)}</span></div>
                     )}
                 </>
-            ) : (
-                <div className="flex-between">
-                    <span>{venda.forma_pagamento}</span>
-                    <span>{formatCurrency(venda.valor_total)}</span>
-                </div>
             )}
         </div>
 
+        <div className="divider"></div>
+
         {/* FIDELIDADE */}
         {venda.clientes && (
-            <div style={{ marginTop: '10px', borderTop: '1px dashed #000', paddingTop: '6px', textAlign: 'center' }}>
-                <div style={{ fontSize: '9px' }}>FIDELIDADE NORDIC</div>
-                <div className="font-bold">GANHOU: {pontosGanhos} | SALDO: {venda.clientes.pontos_acumulados}</div>
+            <div className="text-center" style={{ marginTop: '5px', padding: '4px', border: '1px dashed #000' }}>
+                <div style={{ fontSize: '10px' }}>PROGRAMA FIDELIDADE</div>
+                <div className="font-bold">GANHOU: {pontosGanhos} PONTOS</div>
+                <div>SALDO: {venda.clientes.pontos_acumulados} PONTOS</div>
             </div>
         )}
 
         <div className="text-center" style={{ marginTop: '15px', fontSize: '9px' }}>
-          <div>OBRIGADO PELA PREFERENCIA</div>
-          <div>*** NORDIC TECH ***</div>
+          <div>OBRIGADO PELA PREFERENCIA!</div>
+          <div>Sistema: NordicTech</div>
         </div>
+        <div className="text-center" style={{ marginTop: '20px' }}>.</div>
 
       </div>
     </div>

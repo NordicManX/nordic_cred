@@ -6,10 +6,11 @@ import { Parcela } from "@/src/types";
 import { ConfirmPaymentModal } from "@/src/components/ConfirmPaymentModal";
 import { SaleDetailsDrawer } from "@/src/components/SaleDetailsDrawer";
 import { PaymentSuccessModal } from "@/src/components/PaymentSuccessModal";
+import { ReciboPagamentoModal } from "@/src/components/ReciboPagamentoModal"; // Agora ele existe!
 import { Pagination } from "@/src/components/Pagination";
 import {
-  Search, CheckCircle, Calendar, DollarSign, Loader2,
-  ChevronDown, Wallet, ShoppingBag, Package, Eye, Printer, FileText
+  Search, Calendar, Loader2,
+  ChevronDown, Wallet, ShoppingBag, Package, Printer, FileText
 } from "lucide-react";
 import { toast } from "sonner";
 import { format, isBefore, parseISO } from "date-fns";
@@ -47,11 +48,16 @@ export default function ContasReceberPage() {
   const [pagina, setPagina] = useState(1);
   const ITENS_POR_PAGINA = 5;
 
+  // ESTADOS DE AÇÃO
   const [parcelaSelecionadaBaixa, setParcelaSelecionadaBaixa] = useState<any | null>(null);
   const [loadingBaixa, setLoadingBaixa] = useState(false);
   const [parcelaPreview, setParcelaPreview] = useState<Parcela | null>(null);
+  
+  // MODAIS
   const [dadosSucesso, setDadosSucesso] = useState<any | null>(null);
   const [modalSucessoOpen, setModalSucessoOpen] = useState(false);
+  const [reciboModalOpen, setReciboModalOpen] = useState(false); 
+  const [dadosRecibo, setDadosRecibo] = useState<any>(null);
 
   useEffect(() => {
     fetchContas();
@@ -140,17 +146,30 @@ export default function ContasReceberPage() {
     window.open(`/imprimir/carne/${vendaId}`, '', `width=${w},height=${h},top=100,left=100`);
   };
 
+  // --- ABRE O MODAL DO RECIBO (CORREÇÃO 1) ---
+  const abrirReciboPago = (e: any, p: any) => {
+    e.stopPropagation();
+    setDadosRecibo({
+        referencia: `PARCELA ${p.numero_parcela}`,
+        vencimento: p.data_vencimento,
+        valor: p.valor,
+        dataPagamento: p.data_pagamento || new Date().toISOString(),
+        clienteNome: p.clientes?.nome || "Cliente",
+    });
+    setReciboModalOpen(true);
+  };
+
   const toggleCliente = (id: string) => setClienteExpandido(prev => prev === id ? null : id);
   const toggleVenda = (vid: string) => setVendasExpandidas(prev => prev.includes(vid) ? prev.filter(i => i !== vid) : [...prev, vid]);
   const abrirModalRecebimento = (e: any, p: any) => { e.stopPropagation(); setParcelaSelecionadaBaixa(p); };
 
-  // --- AQUI ESTÁ A LÓGICA DE BAIXA + RESTITUIÇÃO DE LIMITE ---
+  // --- BAIXA E RESTITUIÇÃO DE LIMITE (CORREÇÃO 2) ---
   const confirmarBaixa = async () => {
     if (!parcelaSelecionadaBaixa) return;
     setLoadingBaixa(true);
 
     try {
-        // 1. Atualiza Status da Parcela
+        // 1. Marca como PAGO
         const { error: erroBaixa } = await supabase
             .from("parcelas")
             .update({ 
@@ -161,34 +180,41 @@ export default function ContasReceberPage() {
 
         if (erroBaixa) throw erroBaixa;
 
-        // 2. Devolve Limite ao Cliente (Se ele tiver ID)
+        // 2. Restitui Limite (Corrigido para usar a coluna certa)
         if (parcelaSelecionadaBaixa.cliente_id) {
-            // Busca dados atuais do cliente para não sobrescrever errado
-            const { data: clienteAtual, error: erroCli } = await supabase
+            const { data: clienteAtual } = await supabase
                 .from('clientes')
-                .select('limite, limite_credito') // Pega os dois por segurança
+                .select('*') // Pega tudo para garantir
                 .eq('id', parcelaSelecionadaBaixa.cliente_id)
                 .single();
 
-            if (!erroCli && clienteAtual) {
-                // Tenta usar limite_credito (novo), se não limite (antigo), se não 0
-                const limiteAtual = clienteAtual.limite_credito ?? clienteAtual.limite ?? 0;
-                const novoLimite = limiteAtual + Number(parcelaSelecionadaBaixa.valor);
+            if (clienteAtual) {
+                // Pega o limite_credito (conforme sua imagem do banco)
+                const limiteAtualValor = Number(clienteAtual.limite_credito || 0);
+                const valorDevolvido = Number(parcelaSelecionadaBaixa.valor || 0);
+                const novoLimite = limiteAtualValor + valorDevolvido;
 
-                // Atualiza no banco (tenta atualizar ambos para garantir compatibilidade)
+                // ATUALIZA SÓ O LIMITE_CREDITO (Sua tabela não tem "limite")
                 await supabase
                     .from('clientes')
-                    .update({ 
-                        limite: novoLimite,          // Mantém compatibilidade legado
-                        limite_credito: novoLimite   // Novo padrão
-                    })
+                    .update({ limite_credito: novoLimite })
                     .eq('id', parcelaSelecionadaBaixa.cliente_id);
             }
         }
 
-        toast.success("Pagamento recebido e limite liberado!");
-        fetchContas(); // Recarrega lista
-        setDadosSucesso({ ...parcelaSelecionadaBaixa, valor_pago: parcelaSelecionadaBaixa.valor });
+        toast.success("Pagamento recebido e limite restaurado!");
+        fetchContas();
+        
+        // --- ZAP (CORREÇÃO 3): Passa o telefone corretamente ---
+       setDadosSucesso({ 
+            ...parcelaSelecionadaBaixa, 
+            valor: parcelaSelecionadaBaixa.valor, // O modal espera 'valor', não 'valor_pago'
+            clienteTelefone: parcelaSelecionadaBaixa.clientes?.telefone, // O modal espera 'clienteTelefone'
+            clienteNome: parcelaSelecionadaBaixa.clientes?.nome,
+            numeroParcela: parcelaSelecionadaBaixa.numero_parcela,
+            vencimento: parcelaSelecionadaBaixa.data_vencimento
+        });
+        
         setParcelaSelecionadaBaixa(null);
         setModalSucessoOpen(true);
 
@@ -318,21 +344,18 @@ export default function ContasReceberPage() {
                                             <div className="flex items-center justify-end gap-2">
                                               {p.status === 'pago' && (
                                                 <button
-                                                  onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    window.open(`/imprimir/recibo/${p.id}`, 'Recibo', 'width=400,height=600');
-                                                  }}
-                                                  className="p-1 text-gray-400 hover:text-green-600 transition-colors"
+                                                  onClick={(e) => abrirReciboPago(e, p)}
+                                                  className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-600 px-2 py-1 rounded text-xs font-bold transition-colors"
                                                   title="Imprimir Recibo"
                                                 >
-                                                  <FileText size={16} />
+                                                  <FileText size={14} /> Recibo
                                                 </button>
                                               )}
 
                                               {p.status === 'pendente' ? (
                                                 <button
                                                   onClick={(e) => abrirModalRecebimento(e, p)}
-                                                  className="bg-green-600 text-white px-3 py-1 rounded text-xs font-bold"
+                                                  className="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-xs font-bold transition-colors"
                                                 >
                                                   $ Receber
                                                 </button>
@@ -375,6 +398,13 @@ export default function ContasReceberPage() {
       <ConfirmPaymentModal isOpen={!!parcelaSelecionadaBaixa} onClose={() => setParcelaSelecionadaBaixa(null)} onConfirm={confirmarBaixa} valor={parcelaSelecionadaBaixa?.valor || 0} loading={loadingBaixa} />
       <SaleDetailsDrawer isOpen={!!parcelaPreview} onClose={() => setParcelaPreview(null)} parcela={parcelaPreview} />
       <PaymentSuccessModal isOpen={modalSucessoOpen} onClose={() => setModalSucessoOpen(false)} dados={dadosSucesso} />
+      
+      {/* MODAL DE RECIBO AQUI NO FINAL */}
+      <ReciboPagamentoModal 
+        isOpen={reciboModalOpen} 
+        onClose={() => setReciboModalOpen(false)} 
+        dados={dadosRecibo} 
+      />
     </div>
   );
 }

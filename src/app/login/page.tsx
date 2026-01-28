@@ -68,7 +68,7 @@ export default function LoginPage() {
             Nordic<span className="text-blue-600">Cred</span>
           </h1>
           <p className="text-gray-500 text-sm mt-2">
-            {isSignUp ? "Crie sua conta para começar" : "Gestão Inteligente de Crediário"}
+            {isSignUp ? "Crie sua conta para começar" : "Gestão Inteligente para sua Empresa"}
           </p>
         </div>
 

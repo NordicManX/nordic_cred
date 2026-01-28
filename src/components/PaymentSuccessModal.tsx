@@ -11,8 +11,7 @@ interface PaymentSuccessModalProps {
     clienteTelefone?: string;
     valor: number;
     numeroParcela: number;
-    totalParcelas?: number;
-    restantes: number;
+    restantes?: number;
     vencimento: string;
   } | null;
 }
@@ -20,51 +19,38 @@ interface PaymentSuccessModalProps {
 export function PaymentSuccessModal({ isOpen, onClose, dados }: PaymentSuccessModalProps) {
   if (!isOpen || !dados) return null;
 
-  // 1. WhatsApp Blindado (URLSearchParams)
+  // 1. WhatsApp Blindado
   const gerarLinkWhatsApp = () => {
-    const telefone = dados.clienteTelefone?.replace(/\D/g, "") || "";
+    // Remove tudo que não for número
+    const telefone = (dados.clienteTelefone || "").replace(/\D/g, "");
     
-    if (!telefone) {
-      toast.warning("Cliente sem telefone cadastrado!");
+    if (!telefone || telefone.length < 10) {
+      toast.warning("Cliente sem telefone válido cadastrado!");
       return;
     }
 
     const valorFormatado = dados.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
     
-    // Usamos códigos Unicode para garantir que o emoji saia certo independente do editor
-    // \u2705 = Check Verde
-    // \uD83D\uDCB2 = Sifrão
-    // \uD83D\uDCC5 = Calendário
-    // \uD83D\uDCCA = Gráfico/Status
-    
     const linhas = [
-      "*COMPROVANTE DE PAGAMENTO* \u2705",
+      "*COMPROVANTE DE PAGAMENTO* ✅",
       `Olá, *${dados.clienteNome}*!`,
       "",
       "Confirmamos o recebimento da sua parcela.",
       "",
-      `\uD83D\uDCB2 *Valor:* ${valorFormatado}`,
-      `\uD83D\uDCC5 *Ref:* Parcela ${dados.numeroParcela}`,
-      `\uD83D\uDCCA *Situação:* ${dados.restantes === 0 ? "Quitado! \uD83C\uDF89" : `Restam ${dados.restantes} parcelas.`}`,
+      `💰 *Valor:* ${valorFormatado}`,
+      `📅 *Ref:* Parcela ${dados.numeroParcela}`,
       "",
       "_Obrigado pela preferência!_"
     ];
 
-    const textoCompleto = linhas.join("\n");
-
-    // A Mágica acontece aqui: URLSearchParams codifica tudo perfeitamente
-    const params = new URLSearchParams();
-    params.set("phone", "55" + telefone);
-    params.set("text", textoCompleto);
-
-    const url = `https://api.whatsapp.com/send?${params.toString()}`;
+    const textoCompleto = encodeURIComponent(linhas.join("\n"));
+    const url = `https://api.whatsapp.com/send?phone=55${telefone}&text=${textoCompleto}`;
     window.open(url, '_blank');
   };
 
-  // 2. Recibo Térmico 80mm
-  // 2. Recibo Térmico 80mm (Centralizado)
+  // 2. Recibo Térmico (Ajustado)
   const handleImprimir = () => {
-    const conteudo = document.getElementById("area-recibo")?.innerHTML;
+    const conteudo = document.getElementById("area-recibo-oculto")?.innerHTML;
     const janela = window.open("", "", "height=600,width=800");
 
     if (janela && conteudo) {
@@ -73,56 +59,18 @@ export function PaymentSuccessModal({ isOpen, onClose, dados }: PaymentSuccessMo
           <head>
             <title>Recibo</title>
             <style>
-              /* Reset e Configuração da Página */
-              @page { margin: 0; } /* Remove margens da impressora */
-              body {
-                margin: 0;
-                padding: 40px 0; /* Espaço em cima e embaixo */
-                background-color: #525659; /* Fundo cinza escuro (padrão de visualizadores PDF) */
-                display: flex;
-                justify-content: center; /* A MÁGICA: Centraliza horizontalmente */
-                align-items: flex-start; /* Alinha no topo */
-                min-height: 100vh;
-              }
-
-              /* O "Papel" do Recibo (80mm) */
-              .recibo-papel {
-                width: 80mm;
-                background-color: #fff; /* Papel branco */
-                padding: 20px 15px; /* Espaçamento interno */
-                box-shadow: 0 10px 30px rgba(0,0,0,0.3); /* Sombra realista */
-                
-                /* Estilos do Texto */
-                font-family: 'Courier New', monospace;
-                font-size: 12px;
-                color: #000;
-              }
-
-              /* Estilos Internos (Conteúdo) */
-              .container { width: 100%; }
-              .center { text-align: center; }
-              .bold { font-weight: bold; }
-              .line { border-bottom: 1px dashed #000; margin: 10px 0; }
-              .row { display: flex; justify-content: space-between; margin-bottom: 6px; }
-              .big { font-size: 18px; margin: 15px 0; }
-              .footer { margin-top: 20px; font-size: 10px; text-align: center; color: #555; }
+              @page { margin: 0; }
+              body { margin: 0; padding: 20px; font-family: 'Courier New', monospace; text-align: center; }
+              .recibo { width: 80mm; margin: 0 auto; text-transform: uppercase; }
+              .linha { border-bottom: 1px dashed #000; margin: 10px 0; }
+              .row { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 12px; }
+              .grande { font-size: 16px; font-weight: bold; margin: 15px 0; }
             </style>
           </head>
           <body>
-            <div class="recibo-papel">
-              <div class="container">
-                ${conteudo}
-              </div>
-            </div>
-            
+            <div class="recibo">${conteudo}</div>
             <script>
-              // Delay para garantir que o CSS carregou antes de abrir a caixa de impressão
-              window.onload = function() {
-                setTimeout(() => {
-                    window.print();
-                    // window.close(); // Comentei para você ver o resultado na tela
-                }, 500);
-              }
+              setTimeout(() => { window.print(); window.close(); }, 500);
             </script>
           </body>
         </html>
@@ -144,7 +92,7 @@ export function PaymentSuccessModal({ isOpen, onClose, dados }: PaymentSuccessMo
           <p className="text-green-50 mt-1 opacity-90">Baixa realizada com sucesso.</p>
         </div>
 
-        {/* Corpo Visual (Na Tela) */}
+        {/* Corpo */}
         <div className="p-6 space-y-6">
           <div className="text-center space-y-1">
             <p className="text-gray-400 uppercase text-xs font-bold tracking-wider">Valor Recebido</p>
@@ -181,43 +129,32 @@ export function PaymentSuccessModal({ isOpen, onClose, dados }: PaymentSuccessMo
           </button>
         </div>
 
-        {/* --- MODELO DE RECIBO (Escondido na tela, usado na impressão) --- */}
-        <div id="area-recibo" className="hidden">
-          <div className="center bold big">RECIBO DE PAGAMENTO</div>
-          <div className="line"></div>
+        {/* Recibo Oculto (Para Impressão) */}
+        <div id="area-recibo-oculto" className="hidden">
+          <div style={{fontWeight:'bold', fontSize:'14px', marginBottom:'5px'}}>RECIBO DE PAGAMENTO</div>
+          <div className="linha"></div>
           
           <div className="row">
             <span>DATA:</span>
-            <span>{new Date().toLocaleDateString()} {new Date().toLocaleTimeString().slice(0,5)}</span>
+            <span>{new Date().toLocaleDateString()}</span>
           </div>
-          
-          <div className="line"></div>
-          
-          <div className="center bold" style={{marginBottom: '5px'}}>{dados.clienteNome}</div>
-          
           <div className="row">
-            <span>REFERENCIA:</span>
+            <span>CLIENTE:</span>
+            <span>{dados.clienteNome}</span>
+          </div>
+          <div className="row">
+            <span>REFERÊNCIA:</span>
             <span>PARCELA {dados.numeroParcela}</span>
           </div>
-          
-          <div className="row">
-            <span>VENCIMENTO:</span>
-            <span>{new Date(dados.vencimento).toLocaleDateString()}</span>
-          </div>
 
-          <div className="line"></div>
+          <div className="linha"></div>
           
-          <div className="row big bold">
-            <span>TOTAL PAGO:</span>
-            <span>{dados.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
+          <div className="grande">
+            R$ {dados.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
           </div>
           
-          <div className="line"></div>
-          
-          <div className="footer">
-            SISTEMA DE GESTÃO<br/>
-            Obrigado pela preferência!
-          </div>
+          <div className="linha"></div>
+          <div style={{fontSize:'10px', color:'#555'}}>OBRIGADO PELA PREFERÊNCIA!</div>
         </div>
 
       </div>

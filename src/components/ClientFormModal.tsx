@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { X, Save, Loader2, DollarSign, Search, Award, AlertCircle, Trash2 } from "lucide-react";
 import { createClient } from "@/src/lib/supabase";
 import { toast } from "sonner";
-import { ConfirmModal } from "@/src/components/ConfirmModal"; // Importando o modal bonito
+import { ConfirmModal } from "@/src/components/ConfirmModal"; 
 
 interface ClientFormModalProps {
   isOpen: boolean;
@@ -40,6 +40,24 @@ export function ClientFormModal({ isOpen, onClose, onSuccess, clienteParaEditar 
     pontos_acumulados: 0 // Campo apenas leitura
   });
 
+  // --- FUNÇÕES DE MÁSCARA ---
+  const maskCPF = (value: string) => {
+    return value
+      .replace(/\D/g, "") // Remove tudo o que não é dígito
+      .replace(/(\d{3})(\d)/, "$1.$2")
+      .replace(/(\d{3})(\d)/, "$1.$2")
+      .replace(/(\d{3})(\d{1,2})/, "$1-$2")
+      .replace(/(-\d{2})\d+?$/, "$1"); // Limita ao tamanho do CPF
+  };
+
+  const maskPhone = (value: string) => {
+    return value
+      .replace(/\D/g, "") // Remove tudo o que não é dígito
+      .replace(/^(\d{2})(\d)/g, "($1) $2") // Coloca parênteses em volta dos dois primeiros dígitos
+      .replace(/(\d)(\d{4})$/, "$1-$2") // Coloca hífen entre o quarto e o quinto dígitos
+      .slice(0, 15); // Limita tamanho (15 para celular com 9 dígitos)
+  };
+
   useEffect(() => {
     if (isOpen) {
       if (clienteParaEditar) {
@@ -47,7 +65,7 @@ export function ClientFormModal({ isOpen, onClose, onSuccess, clienteParaEditar 
           nome: clienteParaEditar.nome || "",
           cpf: clienteParaEditar.cpf || "",
           telefone: clienteParaEditar.telefone || "",
-          // Tenta pegar do novo campo, se falhar tenta do antigo (apenas para leitura), se não 0
+          // Tenta pegar do novo campo, se falhar tenta do antigo, se não 0
           limite_credito: clienteParaEditar.limite_credito ?? clienteParaEditar.limite ?? 0,
           cep: clienteParaEditar.cep || "",
           logradouro: clienteParaEditar.logradouro || "",
@@ -69,8 +87,15 @@ export function ClientFormModal({ isOpen, onClose, onSuccess, clienteParaEditar 
   }, [isOpen, clienteParaEditar]);
 
   const buscarCep = async (cepInput: string) => {
-    const cepLimpo = cepInput.replace(/\D/g, "");
-    setFormData(prev => ({ ...prev, cep: cepInput }));
+    // Aplica máscara de CEP visualmente (00000-000)
+    let cepFormatado = cepInput.replace(/\D/g, "").slice(0, 8);
+    if (cepFormatado.length > 5) {
+        cepFormatado = cepFormatado.replace(/^(\d{5})(\d)/, "$1-$2");
+    }
+    
+    setFormData(prev => ({ ...prev, cep: cepFormatado }));
+
+    const cepLimpo = cepFormatado.replace(/\D/g, "");
 
     if (cepLimpo.length === 8) {
       setLoadingCep(true);
@@ -139,10 +164,7 @@ export function ClientFormModal({ isOpen, onClose, onSuccess, clienteParaEditar 
         nome: formData.nome,
         cpf: formData.cpf,
         telefone: formData.telefone,
-        
-        // CORREÇÃO AQUI: Enviamos apenas 'limite_credito', removemos 'limite' pois a coluna não existe mais
         limite_credito: parseFloat(formData.limite_credito.toString()) || 0,
-        
         cep: formData.cep,
         logradouro: formData.logradouro,
         numero: formData.numero,
@@ -221,18 +243,20 @@ export function ClientFormModal({ isOpen, onClose, onSuccess, clienteParaEditar 
                   <label className="label-form">CPF</label>
                   <input 
                     value={formData.cpf}
-                    onChange={e => setFormData({...formData, cpf: e.target.value})}
+                    onChange={e => setFormData({...formData, cpf: maskCPF(e.target.value)})} // APLICA MÁSCARA CPF
                     className="input-form"
                     placeholder="000.000.000-00"
+                    maxLength={14}
                   />
                 </div>
                 <div>
                   <label className="label-form">Telefone / WhatsApp</label>
                   <input 
                     value={formData.telefone}
-                    onChange={e => setFormData({...formData, telefone: e.target.value})}
+                    onChange={e => setFormData({...formData, telefone: maskPhone(e.target.value)})} // APLICA MÁSCARA TELEFONE
                     className="input-form"
                     placeholder="(00) 00000-0000"
+                    maxLength={15}
                   />
                 </div>
               </div>

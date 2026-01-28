@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Search, ShoppingCart, Trash2, User, Loader2, Package, CheckCircle, X, CreditCard, Plus, LayoutGrid, LogOut } from "lucide-react";
+import { Search, ShoppingCart, Trash2, User, Loader2, CheckCircle, X, CreditCard, Plus, LayoutGrid, LogOut, RefreshCcw } from "lucide-react";
 import { toast } from "sonner";
 import { Produto, ItemCarrinho, Cliente } from "@/src/types";
 import { createClient } from "@/src/lib/supabase";
-import { VendaSucessoModal } from "@/src/components/VendaSucessoModal";
+import { VendaSucessoModal } from "@/src/components/VendaSucessoModal"; 
 import { ConfirmModal } from "@/src/components/ConfirmModal"; 
 import { PaymentFlowModal } from "@/src/components/PaymentFlowModal"; 
 import { useRouter } from "next/navigation";
@@ -49,19 +49,67 @@ export default function PDVPage() {
   // Refs
   const inputBuscaRef = useRef<HTMLInputElement>(null);
 
-  // 1. VERIFICAR AUTENTICAÇÃO AO CARREGAR
+  // ==============================================================================
+  // 1. LÓGICA DE PERSISTÊNCIA (SALVAR/RECUPERAR) - NOVO!
+  // ==============================================================================
+
+  // A. Recuperar dados ao abrir a página
+  useEffect(() => {
+    const backup = localStorage.getItem('@nordic:pdv_backup');
+    if (backup) {
+      try {
+        const dados = JSON.parse(backup);
+        
+        // Só restaura se tiver conteúdo útil
+        if (dados.carrinho?.length > 0 || dados.cliente) {
+            setCarrinho(dados.carrinho || []);
+            setClienteSelecionado(dados.cliente || null);
+            toast.info("Venda anterior recuperada!");
+        }
+      } catch (e) {
+        console.error("Erro ao recuperar backup", e);
+      }
+    }
+  }, []);
+
+  // B. Salvar dados a cada alteração
+  useEffect(() => {
+    // Só salva se houver algo para salvar (evita salvar estado vazio inicial)
+    if (carrinho.length > 0 || clienteSelecionado) {
+        const estadoParaSalvar = {
+            carrinho,
+            cliente: clienteSelecionado
+        };
+        localStorage.setItem('@nordic:pdv_backup', JSON.stringify(estadoParaSalvar));
+    }
+  }, [carrinho, clienteSelecionado]);
+
+  // C. Função para limpar manualmente (Cancelar Venda)
+  const limparVendaAtual = () => {
+    if (confirm("Tem certeza que deseja cancelar esta venda e limpar o carrinho?")) {
+        setCarrinho([]);
+        setClienteSelecionado(null);
+        setBuscaCliente("");
+        localStorage.removeItem('@nordic:pdv_backup');
+        toast.success("Venda cancelada.");
+        inputBuscaRef.current?.focus();
+    }
+  };
+
+  // ==============================================================================
+
+  // 2. VERIFICAR AUTENTICAÇÃO AO CARREGAR
   useEffect(() => {
     async function checkAuth() {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) {
             toast.error("Sessão expirada. Faça login novamente.");
-            // Opcional: router.push('/login');
         }
     }
     checkAuth();
   }, []);
 
-  // 2. Carregar Produtos
+  // 3. Carregar Produtos
   useEffect(() => {
     async function loadInitialData() {
       const { data: produtosData } = await supabase
@@ -75,7 +123,7 @@ export default function PDVPage() {
     loadInitialData();
   }, []);
 
-  // 3. Busca de Clientes
+  // 4. Busca de Clientes
   useEffect(() => {
     async function searchClientes() {
       if (buscaCliente.length < 2) {
@@ -124,37 +172,123 @@ export default function PDVPage() {
   };
 
   const removerDoCarrinho = (id: string) => {
-    setCarrinho((prev) => prev.filter((item) => item.id !== id));
+    setCarrinho((prev) => {
+        const novoCarrinho = prev.filter((item) => item.id !== id);
+        // Se o carrinho ficar vazio, limpa o localStorage também para não ficar lixo
+        if (novoCarrinho.length === 0 && !clienteSelecionado) {
+            localStorage.removeItem('@nordic:pdv_backup');
+        }
+        return novoCarrinho;
+    });
+  };
+
+  // --- FUNÇÃO AUXILIAR: OBTER CONSUMIDOR FINAL ---
+  const getConsumidorFinalID = async () => {
+      const { data: existente } = await supabase
+          .from('clientes')
+          .select('id')
+          .ilike('nome', 'Consumidor Final')
+          .maybeSingle();
+
+      if (existente) return existente.id;
+
+      const { data: novo, error } = await supabase
+          .from('clientes')
+          .insert({ 
+              nome: 'Consumidor Final', 
+              cpf: '000.000.000-00', 
+              telefone: '00000000000'
+          })
+          .select('id')
+          .single();
+      
+      if (error) {
+          console.error("Erro ao criar Consumidor Final:", error);
+          throw new Error("Erro de configuração: Não foi possível criar o cliente padrão.");
+      }
+      return novo.id;
   };
 
   // --- PROCESSAMENTO DA VENDA ---
   const processarVenda = async (dadosPagamento: any) => {
     setLoadingVenda(true);
     
-    // Se tiver cliente selecionado usa ele, senão manda NULL (banco entende como Consumidor Final)
-    const clienteIdFinal = clienteSelecionado?.id || null;
+    let clienteIdParaBanco = clienteSelecionado?.id;
 
     try {
-        // --- 0. GARANTIA DE AUTENTICAÇÃO ---
-        // Tenta pegar o usuário. Se falhar, tenta pegar a sessão.
         let userId = (await supabase.auth.getUser()).data.user?.id;
-        
         if (!userId) {
             const { data: { session } } = await supabase.auth.getSession();
             userId = session?.user?.id;
         }
-
         if (!userId) {
-            toast.error("Erro de Autenticação: Sessão expirada.");
-            toast.info("Por favor, recarregue a página ou faça login novamente.");
+            toast.error("Sessão expirada. Faça login novamente.");
             setLoadingVenda(false);
             return;
         }
 
-        // --- 1. CRIAR A VENDA ---
+        if (!clienteIdParaBanco) {
+            if (dadosPagamento.forma_pagamento === 'crediario') {
+                toast.error("Para Crediário, é obrigatório selecionar um cliente cadastrado!");
+                setLoadingVenda(false);
+                return;
+            }
+            try {
+                clienteIdParaBanco = await getConsumidorFinalID();
+            } catch (err: any) {
+                toast.error(err.message);
+                setLoadingVenda(false);
+                return;
+            }
+        }
+
+        // --- TRAVA DE LIMITE ---
+        if (dadosPagamento.forma_pagamento === 'crediario') {
+            const valorFinanciado = dadosPagamento.detalhes.valor_financiado;
+            
+            // Só valida se NÃO foi autorizado pelo gerente manualmente
+            if (!dadosPagamento.detalhes.autorizado_por_gerente) {
+                const { data: cliAtual, error: errCli } = await supabase
+                    .from('clientes')
+                    .select('limite_credito')
+                    .eq('id', clienteIdParaBanco)
+                    .single();
+
+                if (errCli) throw new Error("Erro ao consultar limite.");
+
+                const limiteDisponivel = Number(cliAtual?.limite_credito || 0);
+
+                if (valorFinanciado > limiteDisponivel) {
+                    toast.error(`Limite Insuficiente! Disponível: R$ ${limiteDisponivel.toLocaleString('pt-BR', {minimumFractionDigits: 2})}`);
+                    setLoadingVenda(false);
+                    return;
+                }
+            }
+
+            // Desconta o limite
+            if (clienteIdParaBanco) {
+                const { data: cliParaDesconto } = await supabase
+                    .from('clientes')
+                    .select('limite_credito')
+                    .eq('id', clienteIdParaBanco)
+                    .single();
+                
+                if (cliParaDesconto) {
+                    const limiteAtual = Number(cliParaDesconto.limite_credito || 0);
+                    const novoLimite = limiteAtual - valorFinanciado;
+                    
+                    await supabase
+                        .from('clientes')
+                        .update({ limite_credito: novoLimite })
+                        .eq('id', clienteIdParaBanco);
+                }
+            }
+        }
+
+        // --- CRIAR A VENDA ---
         const { data: venda, error: errVenda } = await supabase.from("vendas").insert({
-            user_id: userId, // Agora usamos o ID garantido
-            cliente_id: clienteIdFinal,
+            user_id: userId,
+            cliente_id: clienteIdParaBanco,
             valor_total: totalCarrinho,
             desconto: dadosPagamento.detalhes.desconto_aplicado || 0,
             forma_pagamento: dadosPagamento.forma_pagamento,
@@ -162,13 +296,10 @@ export default function PDVPage() {
             data_venda: new Date().toISOString()
         }).select().single();
 
-        if (errVenda) {
-            console.error("Erro Supabase Venda:", errVenda);
-            throw new Error(`Erro ao criar venda: ${errVenda.message}`);
-        }
+        if (errVenda) throw new Error(`Erro ao criar venda: ${errVenda.message}`);
         if (!venda) throw new Error("Erro ao gerar ID da venda.");
 
-        // --- 2. INSERIR ITENS ---
+        // --- INSERIR ITENS ---
         const itens = carrinho.map(item => ({
             venda_id: venda.id,
             produto_id: item.id,
@@ -180,7 +311,7 @@ export default function PDVPage() {
         const { error: errItens } = await supabase.from("itens_venda").insert(itens);
         if (errItens) throw errItens;
 
-        // --- 3. ATUALIZAR ESTOQUE ---
+        // --- ATUALIZAR ESTOQUE ---
         for (const item of carrinho) {
             await supabase.rpc('decrementar_estoque', { 
                 p_produto_id: item.id, 
@@ -188,58 +319,23 @@ export default function PDVPage() {
             });
         }
 
-        // --- 4. ATUALIZAR CLIENTE (Limite e Pontos) ---
-        if (clienteIdFinal && clienteSelecionado) {
-            
-            // A. Atualizar Limite (Se foi Crediário)
-            if (dadosPagamento.forma_pagamento === 'crediario') {
-                const valorFinanciado = dadosPagamento.detalhes.valor_financiado;
-                
-                // Busca dados frescos
-                const { data: cliAtual } = await supabase
-                    .from('clientes')
-                    .select('limite, limite_credito')
-                    .eq('id', clienteIdFinal)
-                    .single();
-
-                if (cliAtual) {
-                    const limiteAtual = cliAtual.limite_credito ?? cliAtual.limite ?? 0;
-                    const novoLimite = limiteAtual - valorFinanciado;
-
-                    await supabase.from('clientes')
-                        .update({ 
-                            limite: novoLimite, 
-                            limite_credito: novoLimite 
-                        })
-                        .eq('id', clienteIdFinal);
-                }
-            }
-
-            // B. Pontos Ganhos
+        // --- FIDELIDADE (PONTOS) ---
+        if (clienteSelecionado && clienteIdParaBanco === clienteSelecionado.id) {
             if (dadosPagamento.detalhes.pontos_ganhos_estimados > 0) {
                 await supabase.rpc('incrementar_pontos', {
-                    p_cliente_id: clienteIdFinal,
+                    p_cliente_id: clienteIdParaBanco,
                     p_pontos: dadosPagamento.detalhes.pontos_ganhos_estimados
                 });
             }
-
-            // C. Pontos Usados (Desconto)
             if (dadosPagamento.detalhes.pontos_usados > 0) {
-                const { error: errRPC } = await supabase.rpc('decrementar_pontos', {
-                    p_cliente_id: clienteIdFinal,
+                await supabase.rpc('decrementar_pontos', {
+                    p_cliente_id: clienteIdParaBanco,
                     p_pontos: dadosPagamento.detalhes.pontos_usados
                 });
-                
-                if (errRPC) {
-                    const saldoAtual = clienteSelecionado.pontos_acumulados || 0;
-                    await supabase.from('clientes')
-                        .update({ pontos_acumulados: Math.max(0, saldoAtual - dadosPagamento.detalhes.pontos_usados) })
-                        .eq('id', clienteIdFinal);
-                }
             }
         }
 
-        // --- 5. GERAR PARCELAS (Se for crediário) ---
+        // --- GERAR PARCELAS ---
         if (dadosPagamento.forma_pagamento === 'crediario') {
             const numParcelas = dadosPagamento.detalhes.parcelas;
             const valorFinanciado = dadosPagamento.detalhes.valor_financiado;
@@ -253,7 +349,7 @@ export default function PDVPage() {
 
                 parcelas.push({
                     venda_id: venda.id,
-                    cliente_id: clienteIdFinal,
+                    cliente_id: clienteIdParaBanco,
                     numero_parcela: i + 1,
                     valor: valorParcela,
                     data_vencimento: dataP.toISOString(),
@@ -265,16 +361,15 @@ export default function PDVPage() {
 
         // --- SUCESSO ---
         toast.success("Venda realizada com sucesso!");
-        
         setUltimaVendaId(venda.id);
         setFormaPagamentoReal(dadosPagamento.forma_pagamento);
         
-        // Limpa PDV
+        // LIMPEZA GERAL (ESTADO + LOCALSTORAGE) - IMPORTANTE!
         setCarrinho([]);
         setClienteSelecionado(null);
         setBuscaCliente("");
+        localStorage.removeItem('@nordic:pdv_backup'); // <--- LIMPA O BACKUP AQUI
         
-        // Fecha Pagamento e Abre Sucesso
         setIsPaymentOpen(false);
         setSucessoOpen(true);
 
@@ -368,10 +463,18 @@ export default function PDVPage() {
         
         {/* Header Carrinho */}
         <div className="p-4 bg-gray-50 border-b border-gray-200 space-y-3 shrink-0">
-          <h2 className="font-bold text-gray-800 flex items-center gap-2 text-lg">
-            <ShoppingCart size={20} className="text-blue-600" />
-            Carrinho
-          </h2>
+          <div className="flex justify-between items-center">
+            <h2 className="font-bold text-gray-800 flex items-center gap-2 text-lg">
+              <ShoppingCart size={20} className="text-blue-600" />
+              Carrinho
+            </h2>
+            {/* Botão de Limpar Venda (NOVO) */}
+            {carrinho.length > 0 && (
+                <button onClick={limparVendaAtual} className="text-xs text-red-500 hover:bg-red-50 px-2 py-1 rounded flex items-center gap-1 transition-colors" title="Cancelar Venda">
+                    <RefreshCcw size={12}/> Limpar
+                </button>
+            )}
+          </div>
           
           {/* Seleção de Cliente */}
           <div className="relative">
